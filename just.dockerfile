@@ -1,9 +1,9 @@
 FROM debian:stretch-slim AS builder
 RUN apt update
 RUN apt install -y g++ curl make tar gzip libfindbin-libs-perl
-RUN curl -L -o 0.0.2.tar.gz -L https://github.com/just-js/just/archive/0.0.2.tar.gz
-RUN tar -zxvf 0.0.2.tar.gz
-WORKDIR /just-0.0.2
+RUN curl -L -o 0.0.3.tar.gz -L https://github.com/just-js/just/archive/0.0.3.tar.gz
+RUN tar -zxvf 0.0.3.tar.gz
+WORKDIR /just-0.0.3
 RUN make runtime
 RUN curl -L -o modules.tar.gz https://github.com/just-js/modules/archive/0.0.3.tar.gz
 RUN tar -zxvf modules.tar.gz
