@@ -43,3 +43,19 @@ http://localhost:8080/fortunes
 
 http://localhost:8080/cached-world?q=
 
+## Todo
+- fix spawn.js socketpairs for stdin/stdout/stderr
+- module support
+- just a dockerfile with a FROM - build from just-js/techempower using github?
+- check all return codes
+- tests
+- fuzzing
+- cpu/memory/io usage stats
+
+## Optimizations
+- test SIMD for html escape
+- optimize http parser
+- SetAlignedPointer for ArrayBuffers
+- test syscall overhead
+- io_uring
+- StringBuffers
