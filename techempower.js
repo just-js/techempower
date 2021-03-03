@@ -1,7 +1,7 @@
-const { connect, constants } = require('lib/connection.js')
-const { createServer } = require('lib/tcp.js')
-const { createParser } = require('lib/http.js')
-const { sjs, attr } = require('lib/stringify.js')
+const { connect, constants } = require('@pg').pg
+const { createServer } = require('@tcp')
+const { createParser } = require('@http')
+const { sjs, attr } = require('@stringify')
 
 function compile (sock, query) {
   return new Promise((resolve, reject) => {
@@ -389,7 +389,6 @@ function onHTTPConnect (sock) {
 }
 
 function onPGReady () {
-  microtasks = false
   just.print(`listen: ${server.listen()}`)
 }
 
@@ -410,8 +409,6 @@ let i = poolSize
 const sJSON = sjs({ message: attr('string') })
 const sDB = sjs({ id: attr('number'), randomNumber: attr('number') })
 while (i--) connect(tfb, onPGConnect)
-const { loop } = just.factory
-let microtasks = true
 
 let time = (new Date()).toUTCString()
 let rHTML = `HTTP/1.1 200 OK\r\nServer: j\r\nDate: ${time}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: `
@@ -425,7 +422,3 @@ just.setInterval(() => {
   rJSON = `HTTP/1.1 200 OK\r\nServer: j\r\nDate: ${time}\r\nContent-Type: application/json\r\nContent-Length: `
   r404 = `HTTP/1.1 404 Not Found\r\nServer: j\r\nDate: ${time}\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n`
 }, 100)
-while (1) {
-  if (loop.poll(0) === 0) loop.poll(-1)
-  if (microtasks) just.sys.runMicroTasks()
-}
