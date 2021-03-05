@@ -1,6 +1,8 @@
 const { launch, watch } = just.process
 const { readStat } = require('lib/monitor.js')
 
+const { STDOUT_FILENO, STDERR_FILENO } = just.sys
+
 async function main (args) {
   const cpus = parseInt(just.env().CPUS || just.sys.cpus, 10)
   const pids = []
@@ -8,6 +10,8 @@ async function main (args) {
   const path = just.sys.cwd()
   for (let i = 0; i < cpus; i++) {
     const process = launch('just', args, path)
+    process.onStdout = (buf, len) => just.net.write(STDOUT_FILENO, buf, len)
+    process.onStderr = (buf, len) => just.net.write(STDERR_FILENO, buf, len)
     pids.push(process.pid)
     processes.push(watch(process))
   }
