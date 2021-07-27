@@ -422,3 +422,10 @@ just.setInterval(() => {
   rJSON = `HTTP/1.1 200 OK\r\nServer: j\r\nDate: ${time}\r\nContent-Type: application/json\r\nContent-Length: `
   r404 = `HTTP/1.1 404 Not Found\r\nServer: j\r\nDate: ${time}\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n`
 }, 100)
+/*
+just.setInterval(() => {
+  const { user, system } = just.cpuUsage()
+  const { rss } = just.memoryUsage()
+  just.print(`mem ${rss} cpu (${user.toFixed(2)}/${system.toFixed(2)}) ${(user + system).toFixed(2)}`)
+}, 1000)
+*/

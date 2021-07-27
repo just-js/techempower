@@ -14,11 +14,10 @@ RUN JUST_HOME=$(pwd) make -C modules/html/ html.so
 FROM debian:stretch-slim
 WORKDIR /app
 RUN mkdir -p /app/lib
-COPY lib/stringify.js lib/connection.js lib/dns.js lib/http.js lib/lookup.js lib/pg.js lib/tcp.js lib/md5.js lib/monitor.js ./lib/
-COPY realistic.js spawn.js ./
+COPY raw.js spawn.js ./
 COPY --from=builder /just-0.0.5/just /bin/just
 COPY --from=builder /just-0.0.5/modules/picohttp/http.so ./
 COPY --from=builder /just-0.0.5/modules/html/html.so ./
 ENV LD_LIBRARY_PATH=/app
 ENV PGPOOL=1
-CMD ["just", "spawn.js", "realistic.js"]
+CMD ["just", "spawn.js", "raw.js"]
