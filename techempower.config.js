@@ -3,7 +3,9 @@ const db = {
   port: 5432,
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
-  database: 'hello_world'
+  database: 'hello_world',
+  bufferSize: 64 * 1024,
+  version: 0x00030000
 }
 
 const server = {
