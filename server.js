@@ -1,8 +1,7 @@
 const stringify = require('@stringify')
-const justify = require('../libs/justify/justify.js')
+const justify = require('@justify')
 const postgres = require('pg.js')
 const config = require('techempower.config.js')
-const util = require('util.js')
 
 const { createPool, compile, constants } = postgres
 const { BinaryInt } = constants
@@ -24,8 +23,6 @@ async function main () {
   const sDB = sjs({ id: attr('number'), randomnumber: attr('number') })
   const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
   const connections = await createPool(config.db, poolSize, onConnect)
-  //just.print(util.stringify(connections))
-  //just.print(util.stringify(util.getMethods(connections[0])))
   const server = createServer()
     .get('/db', async (req, res) => {
       res.json(sDB(await res.socket.getWorldById(getRandom())))
@@ -56,11 +53,3 @@ async function main () {
 }
 
 main().catch(err => just.error(err.stack))
-
-/*
-just.setInterval(() => {
-  const { user, system } = just.cpuUsage()
-  const { rss } = just.memoryUsage()
-  just.print(`mem ${rss} cpu (${user.toFixed(2)}/${system.toFixed(2)}) ${(user + system).toFixed(2)}`)
-}, 1000)
-*/

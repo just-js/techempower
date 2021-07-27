@@ -1,8 +1,8 @@
 const { createClient } = require('@tcp')
 const { lookup } = require('@dns')
-const md5 = require('../libs/pg/md5.js')
+const md5 = require('@md5')
 
-// COnstants
+// Constants
 const constants = {
   AuthenticationMD5Password: 5,
   formats: {
