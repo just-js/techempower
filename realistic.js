@@ -1,11 +1,11 @@
 const stringify = require('@stringify')
-const justify = require('../libs/justify/justify.js')
+const justify = require('@justify')
+const postgres = require('@pg')
+const cache = require('@cache')
+const html = require('@html')
 const config = require('config.js')
-const postgres = require('../libs/pg/pg.js')
-const cache = require('../libs/cache/cache.js')
-const html = require('../libs/html/html.js')
 
-const { Connection, compile, compileBatchUpdate, compileMultiQuery } = postgres
+const { createConnectionPool, compile, compileBatchUpdate, compileMultiQuery } = postgres
 const { BinaryInt, VarChar } = postgres.pg
 const { createServer } = justify
 const { sjs, attr } = stringify
@@ -20,13 +20,9 @@ async function compileQueries (db, maxQuery, getRandom) {
   db.getWorldById = await compile(db,
     'select id, randomNumber from World where id = $1', 's1',
     [BinaryInt], [BinaryInt], [1], false, false)
-  db.getWorldByIdRaw = await compile(db,
-    'select id, randomNumber from World where id = $1', 's3',
-    [BinaryInt], [BinaryInt], [1], false, true)
   db.getAllFortunes = await compile(db, 'select * from Fortune',
     's2', [BinaryInt, VarChar], [], [], true)
   db.getRandomWorlds = compileMultiQuery(db.getWorldById, () => [getRandom()])
-  db.getRandomWorldsRaw = compileMultiQuery(db.getWorldByIdRaw, () => [getRandom()])
   db.batchUpdates = []
   const promises = []
   for (let i = 1; i < maxQuery + 1; i++) {
@@ -44,96 +40,70 @@ async function main () {
   const sJSON = sjs({ message: attr('string') })
   const message = 'Hello, World!'
   const json = { message }
+
   const fortunes = html.load(config.templates.fortunes, { rawStrings: false, compile: true })
+  const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
+  const clients = await createConnectionPool(config.db, poolSize, db => compileQueries(db, maxQuery, getRandom))
 
-  for (let i = 0; i < poolSize; i++) {
-    const db = new Connection(config.db)
-    await db.connect()
-    await compileQueries(db, maxQuery, getRandom)
-    just.print(`client ${i} added to pool`)
-    clients.push(db)
+  function sortByMessage (a, b) {
+    if (a.message > b.message) return 1
+    if (a.message < b.message) return -1
+    return 0
   }
-
-  // todo - use grid as in memory cache
   const server = createServer()
     .get('/json', (req, res) => res.json(sJSON(json)))
     .get('/plaintext', (req, res) => res.text(message))
-    .get('/db4', (req, res) => {
-      const { query } = res.socket.getWorldById
-      query.call(err => {
-        if (err) return server.serverError(req, res, err)
-        res.json(JSON.stringify(query.getRows()))
-      })
-    })
     .get('/db', async (req, res) => {
-      const rows = await res.socket.getWorldById.call(getRandom())
+      const { getWorldById } = res.socket
+      const rows = await getWorldById.call(getRandom())
       res.json(sDB(rows[0]))
     })
-    .get('/db2', async (req, res) => {
-      const rows = await res.socket.getWorldByIdRaw.call(getRandom())
-      const [id, randomnumber] = rows[0]
-      res.json(sDB({ id, randomnumber }))
-    })
-    .get('/db3', async (req, res) => {
-      const rows = await res.socket.getWorldByIdRaw.call(getRandom())
-      const row = rows[0]
-      res.json(`{"id":${row[0]},"randomnumber":${row[1]}}`)
-    })
     .get('/query', async (req, res) => {
-      const rows = await res.socket.getRandomWorlds(getCount(req.query))
-      res.json(JSON.stringify(rows.map(r => r[0])))
-    }, { qs: true })
-    .get('/query2', async (req, res) => {
-      const rows = await res.socket.getRandomWorldsRaw(getCount(req.query))
+      const { getRandomWorlds } = res.socket
+      const rows = await getRandomWorlds(getCount(req.query))
       res.json(JSON.stringify(rows.map(r => r[0])))
     }, { qs: true })
     .get('/update', async (req, res) => {
+      const { getRandomWorlds, batchUpdates } = res.socket
       const count = getCount(req.query)
-      const rows = (await res.socket.getRandomWorlds(count))
+      const rows = (await getRandomWorlds(count))
         .map(row => Object.assign(row[0], { randomnumber: getRandom() }))
-      await res.socket.batchUpdates[count - 1]
+      await batchUpdates[count - 1]
         .call(...rows.flatMap(row => [row.id, row.randomnumber]))
       res.json(JSON.stringify(rows))
     }, { qs: true })
     .get('/fortunes', async (req, res) => {
       const rows = await res.socket.getAllFortunes.call()
-      res.html(fortunes.call([extra, ...rows].sort()))
+      res.html(fortunes.call([extra, ...rows].sort(sortByMessage)))
     })
     .get('/cached-worlds', async (req, res) => {
+      const { worldCache } = res.socket
       const count = getCount(req.query || { q: 1 })
       const promises = []
       for (let i = 0; i < count; i++) {
-        promises.push(res.socket.worldCache.get(getRandom()))
+        promises.push(worldCache.get(getRandom()))
       }
       const rows = (await Promise.all(promises)).map(v => v[0])
       res.json(JSON.stringify(rows))
     }, { qs: true })
     .connect(sock => {
       const client = clients[sock.fd % clients.length]
-      const { getWorldById, getWorldByIdRaw, getAllFortunes, batchUpdates, getRandomWorlds, getRandomWorldsRaw } = client
+      const { getWorldById, getAllFortunes, batchUpdates, getRandomWorlds } = client
       const worldCache = new SimpleCache(id => getWorldById.call(id)).start()
       sock.getWorldById = getWorldById
-      sock.getWorldByIdRaw = getWorldByIdRaw
       sock.getAllFortunes = getAllFortunes
       sock.batchUpdates = batchUpdates
       sock.getRandomWorlds = getRandomWorlds
-      sock.getRandomWorldsRaw = getRandomWorldsRaw
       sock.worldCache = worldCache
     })
     .listen(port, address)
-  server.stackTraces = true
   server.name = 'j'
 }
 
-const clients = []
-const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
-
 main().catch(err => just.error(err.stack))
 
-/*
 just.setInterval(() => {
   const { user, system } = just.cpuUsage()
   const { rss } = just.memoryUsage()
   just.print(`mem ${rss} cpu (${user.toFixed(2)}/${system.toFixed(2)}) ${(user + system).toFixed(2)}`)
 }, 1000)
-*/

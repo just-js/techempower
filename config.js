@@ -13,7 +13,6 @@ const server = {
 
 const templates = {
   fortunes: 'fortunes.html',
-  fortunes2: 'fortunes2.html',
   settings: { rawStrings: false, compile: true }
 }
 
