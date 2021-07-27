@@ -1,7 +1,8 @@
-const { connect, constants } = require('@pg').pg
+const postgres = require('@pg')
 const { createServer } = require('@tcp')
 const { createParser } = require('@http')
 const { sjs, attr } = require('@stringify')
+const { connect, constants } = postgres.pg
 
 function compile (sock, query) {
   return new Promise((resolve, reject) => {

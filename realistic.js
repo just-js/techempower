@@ -3,7 +3,7 @@ const justify = require('@justify')
 const postgres = require('@pg')
 const cache = require('@cache')
 const html = require('@html')
-const config = require('config.js')
+const config = require('techempower.config.js')
 
 const { createConnectionPool, compile, compileBatchUpdate, compileMultiQuery } = postgres
 const { BinaryInt, VarChar } = postgres.pg
@@ -61,7 +61,8 @@ async function main () {
     .get('/query', async (req, res) => {
       const { getRandomWorlds } = res.socket
       const rows = await getRandomWorlds(getCount(req.query))
-      res.json(JSON.stringify(rows.map(r => r[0])))
+      res.json(JSON.stringify(rows))
+      //res.json(JSON.stringify(rows.map(r => r[0])))
     }, { qs: true })
     .get('/update', async (req, res) => {
       const { getRandomWorlds, batchUpdates } = res.socket
