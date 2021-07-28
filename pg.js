@@ -3,6 +3,8 @@ const { lookup } = require('@dns')
 const md5 = require('@md5')
 
 // Constants
+const voidFn = () => {}
+
 const constants = {
   AuthenticationMD5Password: 5,
   formats: {
@@ -58,7 +60,266 @@ const {
   CloseComplete
 } = constants.messageTypes
 
+// Utilities
+function readCString (buf, u8, off) {
+  const start = off
+  while (u8[off] !== 0) off++
+  return buf.readString(off - start, start)
+}
+
 // Protocol
+class Messaging {
+  constructor (buffer, config) {
+    const { sql, formats, portal, name, params, fields, maxRows = 100 } = config
+    this.buffer = buffer
+    this.view = new DataView(buffer)
+    this.bytes = new Uint8Array(buffer)
+    this.off = 0
+    this.sql = sql
+    this.formats = formats
+    this.portal = portal
+    this.name = name
+    this.params = params
+    this.fields = fields
+    this.maxRows = maxRows
+    this.index = 0
+  }
+
+  createPrepareMessage (off = this.off) {
+    const { view, buffer, formats, name, sql } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    const len = 9 + sql.length + name.length + (formats.length * 4)
+    view.setUint8(off++, 80) // 'P'
+    view.setUint32(off, len - 1)
+    off += 4
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    off += buffer.writeString(sql, off)
+    view.setUint8(off++, 0)
+    view.setUint16(off, formats.length)
+    off += 2
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint32(off, formats[i].oid)
+      off += 4
+    }
+    offsets.len = off - offsets.start
+    return { off, offsets, len }
+  }
+
+  createDescribeMessage (off = this.off) {
+    const { view, buffer, name } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    const len = 7 + name.length
+    view.setUint8(off++, 68) // 'D'
+    view.setUint32(off, len - 1)
+    off += 4
+    view.setUint8(off++, 83) // 'S'
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    offsets.len = off - offsets.start
+    return { offsets, off, len }
+  }
+
+  createFlushMessage (off = this.off) {
+    const { view } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    view.setUint8(off++, 72) // 'H'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.len = off - offsets.start
+    return { off, offsets }
+  }
+
+  createSyncMessage (off = this.off) {
+    const { view } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    view.setUint8(off++, 83) // 'S'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.len = off - offsets.start
+    return { off, offsets }
+  }
+
+  createExecMessage (off = this.off) {
+    const { view, buffer, portal, maxRows } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    const len = 6 + portal.length + 4
+    view.setUint8(off++, 69) // 'E'
+    view.setUint32(off, len - 1)
+    off += 4
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+    }
+    view.setUint8(off++, 0)
+    view.setUint32(off, maxRows)
+    off += 4
+    offsets.len = off - offsets.start
+    return { len, off, offsets }
+  }
+
+  createBindMessage (off = this.off) {
+    const { view, buffer, formats, portal, name, params, fields } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    view.setUint8(off++, 66) // 'B'
+    off += 4 // length - will be filled in later
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
+    } else {
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
+    }
+    view.setUint16(off, formats.length || 0)
+    off += 2
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint16(off, formats[i].format)
+      off += 2
+    }
+    view.setUint16(off, params.length || 0)
+    off += 2
+    const paramStart = off
+    for (let i = 0; i < params.length; i++) {
+      if ((formats[i] || formats[0]).format === 1) {
+        view.setUint32(off, 4)
+        off += 4
+        view.setUint32(off, params[i])
+        off += 4
+      } else {
+        const paramString = params[i].toString()
+        view.setUint32(off, paramString.length)
+        off += 4
+        off += buffer.writeString(paramString, off)
+      }
+    }
+    view.setUint16(off, fields.length)
+    off += 2
+    for (let i = 0; i < fields.length; i++) {
+      view.setUint16(off, fields[i].format)
+      off += 2
+    }
+    offsets.len = off - offsets.start
+    view.setUint32(offsets.start + 1, offsets.len - 1)
+    return {
+      off,
+      offsets,
+      paramStart,
+      set: (...args) => {
+        let off = paramStart
+        for (let i = 0; i < params.length; i++) {
+          if ((formats[i] || formats[0]).format === 1) {
+            view.setUint32(off + 4, args[i])
+            off += 4
+          } else {
+            const paramString = args[i].toString()
+            view.setUint32(paramStart, paramString.length)
+            off += 4
+            off += buffer.writeString(paramString, off)
+          }
+        }
+      }
+    }
+  }
+}
+
+class Batch {
+  constructor (sock, query, size) {
+    this.sock = sock
+    this.query = query
+    this.size = size
+    this.bindings = []
+    this.exec = null
+    this.prepare = null
+    this.args = []
+    this.first = 0
+  }
+
+  setup () {
+    const { size, query, bindings } = this
+    const m = new Messaging(new ArrayBuffer(128 * size), query)
+    for (let i = 0; i < size; i++) {
+      const bind = m.createBindMessage()
+      bindings.push(bind)
+      m.off = bind.off
+      const exec = m.createExecMessage()
+      m.off = exec.off
+    }
+    const sync = m.createSyncMessage()
+    m.off = sync.off
+    const flush = m.createFlushMessage()
+    m.off = flush.off
+    const p = new Messaging(new ArrayBuffer(256), query)
+    const prepare = p.createPrepareMessage()
+    p.off = prepare.off
+    const describe = p.createDescribeMessage()
+    p.off = describe.off
+    this.exec = m
+    this.prepare = p
+    return this
+  }
+
+  set (args, first) {
+    const { bindings } = this
+    this.first = first
+    this.args = args
+    args.forEach((args, i) => bindings[i + first].set(args))
+  }
+
+  compile () {
+    const { sock, prepare } = this
+    sock.callbacks.push(voidFn)
+    sock.callbacks.push(voidFn)
+    const r = sock.write(prepare.buffer, prepare.off, 0)
+    if (r <= 0) throw new just.SystemError('Could Not Prepare Queries')
+    return this
+  }
+
+  async run (args) {
+    const { sock, size, bindings, exec } = this
+    const { buffer, off } = exec
+    const n = args.length
+    const first = size - n
+    const { callbacks } = sock
+    const results = []
+    let done = 0
+    return new Promise((resolve, reject) => {
+      for (const arg of args) {
+        bindings[done + first].set(arg)
+        callbacks.push(err => {
+          done++
+          if (err) {
+            reject(err)
+            return
+          }
+          const { state, dv } = sock.parser
+          const { start, rows } = state
+          if (rows === 1) {
+            const id = dv.getInt32(start + 11)
+            const randomnumber = dv.getInt32(start + 19)
+            results.push({ id, randomnumber })
+          } else {
+            just.error('multiple rows')
+          }
+          if (done === n) resolve(n === 1 ? results[0] : results)
+        })
+      }
+      if (n < size) {
+        const start = bindings[first].offsets.start
+        sock.write(buffer, exec.off - start, start)
+      } else {
+        sock.write(buffer, off, 0)
+      }
+    })
+  }
+}
 
 function createParser (buf) {
   let nextRow = 0
@@ -313,8 +574,8 @@ function createParser (buf) {
   return parser
 }
 
-// Messaging
-function startupMessage ({ user, database, version = 0x00030000, parameters = [] }) {
+function startupMessage (db) {
+  const { user, database, version = 0x00030000, parameters = [] } = db
   let len = 8 + 4 + 1 + user.length + 1 + 8 + 1 + database.length + 2
   for (let i = 0; i < parameters.length; i++) {
     const { name, value } = parameters[i]
@@ -413,17 +674,6 @@ function connect (config, buffer) {
   })
 }
 
-const voidFn = () => {}
-
-// Utilities
-function readCString (buf, u8, off) {
-  const start = off
-  while (u8[off] !== 0) off++
-  return buf.readString(off - start, start)
-}
-
-// External
-
 async function createConnection (config, connections, onConnect) {
   const sock = await connect(config, new ArrayBuffer(config.bufferSize))
   const defaultAction = (...args) => sock.callbacks.shift()(...args)
@@ -455,268 +705,18 @@ async function createConnection (config, connections, onConnect) {
   sock.onData = bytes => parser.parse(bytes)
   await start(sock)
   await authenticate(sock, parser.salt)
-  connections.push(sock)
   await onConnect(sock)
+  return sock
 }
 
+// External
 async function createPool (config, poolSize, onConnect) {
   const connections = []
   for (let i = 0; i < poolSize; i++) {
-    await createConnection(config, connections, onConnect)
+    const sock = await createConnection(config, connections, onConnect)
+    connections.push(sock)
   }
   return connections
-}
-
-class Messaging {
-  constructor (buffer, { sql, formats, portal, name, params, fields, maxRows = 100 }) {
-    this.buffer = buffer
-    this.view = new DataView(buffer)
-    this.bytes = new Uint8Array(buffer)
-    this.off = 0
-    this.sql = sql
-    this.formats = formats
-    this.portal = portal
-    this.name = name
-    this.params = params
-    this.fields = fields
-    this.maxRows = maxRows
-    this.index = 0
-  }
-
-  createPrepareMessage (off = this.off) {
-    const { view, buffer, formats, name, sql } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    const len = 1 + 4 + sql.length + 1 + name.length + 1 + 2 + (formats.length * 4)
-    view.setUint8(off++, 80) // 'P'
-    view.setUint32(off, len - 1)
-    off += 4
-    off += buffer.writeString(name, off)
-    view.setUint8(off++, 0)
-    off += buffer.writeString(sql, off)
-    view.setUint8(off++, 0)
-    view.setUint16(off, formats.length)
-    off += 2
-    for (let i = 0; i < formats.length; i++) {
-      view.setUint32(off, formats[i].oid)
-      off += 4
-    }
-    offsets.len = off - offsets.start
-    return { off, offsets, len }
-  }
-
-  createDescribeMessage (off = this.off) {
-    const { view, buffer, name } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    const len = 7 + name.length
-    view.setUint8(off++, 68) // 'D'
-    view.setUint32(off, len - 1)
-    off += 4
-    view.setUint8(off++, 83) // 'S'
-    off += buffer.writeString(name, off)
-    view.setUint8(off++, 0)
-    offsets.len = off - offsets.start
-    return { offsets, off, len }
-  }
-
-  createFlushMessage (off = this.off) {
-    const { view } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    view.setUint8(off++, 72) // 'H'
-    view.setUint32(off, 4)
-    off += 4
-    offsets.len = off - offsets.start
-    return { off, offsets }
-  }
-
-  createSyncMessage (off = this.off) {
-    const { view } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    view.setUint8(off++, 83) // 'S'
-    view.setUint32(off, 4)
-    off += 4
-    offsets.len = off - offsets.start
-    return { off, offsets }
-  }
-
-  createExecMessage (off = this.off) {
-    const { view, buffer, portal, maxRows } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    const len = 6 + portal.length + 4
-    view.setUint8(off++, 69) // 'E'
-    view.setUint32(off, len - 1)
-    off += 4
-    if (portal.length) {
-      off += buffer.writeString(portal, off)
-    }
-    view.setUint8(off++, 0)
-    view.setUint32(off, maxRows)
-    off += 4
-    offsets.len = off - offsets.start
-    return { len, off, offsets }
-  }
-
-  createBindMessage (off = this.off) {
-    const { view, buffer, formats, portal, name, params, fields } = this
-    const offsets = { start: 0, end: 0 }
-    offsets.start = off
-    view.setUint8(off++, 66) // 'B'
-    off += 4 // length - will be filled in later
-    if (portal.length) {
-      off += buffer.writeString(portal, off)
-      view.setUint8(off++, 0)
-      off += buffer.writeString(name, off)
-      view.setUint8(off++, 0)
-    } else {
-      view.setUint8(off++, 0)
-      off += buffer.writeString(name, off)
-      view.setUint8(off++, 0)
-    }
-    view.setUint16(off, formats.length || 0)
-    off += 2
-    for (let i = 0; i < formats.length; i++) {
-      view.setUint16(off, formats[i].format)
-      off += 2
-    }
-    view.setUint16(off, params.length || 0)
-    off += 2
-    const paramStart = off
-    for (let i = 0; i < params.length; i++) {
-      if ((formats[i] || formats[0]).format === 1) {
-        view.setUint32(off, 4)
-        off += 4
-        view.setUint32(off, params[i])
-        off += 4
-      } else {
-        const paramString = params[i].toString()
-        view.setUint32(off, paramString.length)
-        off += 4
-        off += buffer.writeString(paramString, off)
-      }
-    }
-    view.setUint16(off, fields.length)
-    off += 2
-    for (let i = 0; i < fields.length; i++) {
-      view.setUint16(off, fields[i].format)
-      off += 2
-    }
-    offsets.len = off - offsets.start
-    view.setUint32(offsets.start + 1, offsets.len - 1)
-    return {
-      off,
-      offsets,
-      paramStart,
-      set: (...args) => {
-        let off = paramStart
-        for (let i = 0; i < params.length; i++) {
-          if ((formats[i] || formats[0]).format === 1) {
-            view.setUint32(off + 4, args[i])
-            off += 4
-          } else {
-            const paramString = args[i].toString()
-            view.setUint32(paramStart, paramString.length)
-            off += 4
-            off += buffer.writeString(paramString, off)
-          }
-        }
-      }
-    }
-  }
-}
-
-class Batch {
-  constructor (sock, query, size) {
-    this.sock = sock
-    this.query = query
-    this.size = size
-    this.bindings = []
-    this.exec = null
-    this.prepare = null
-    this.args = []
-    this.first = 0
-  }
-
-  setup () {
-    const { size, query, bindings } = this
-    const m = new Messaging(new ArrayBuffer(128 * size), query)
-    for (let i = 0; i < size; i++) {
-      const bind = m.createBindMessage()
-      bindings.push(bind)
-      m.off = bind.off
-      const exec = m.createExecMessage()
-      m.off = exec.off
-    }
-    const sync = m.createSyncMessage()
-    m.off = sync.off
-    const flush = m.createFlushMessage()
-    m.off = flush.off
-    const p = new Messaging(new ArrayBuffer(256), query)
-    const prepare = p.createPrepareMessage()
-    p.off = prepare.off
-    const describe = p.createDescribeMessage()
-    p.off = describe.off
-    this.exec = m
-    this.prepare = p
-    return this
-  }
-
-  set (args, first) {
-    const { bindings } = this
-    this.first = first
-    this.args = args
-    args.forEach((args, i) => bindings[i + first].set(args))
-  }
-
-  compile () {
-    const { sock, prepare } = this
-    sock.callbacks.push(voidFn)
-    sock.callbacks.push(voidFn)
-    const r = sock.write(prepare.buffer, prepare.off, 0)
-    if (r <= 0) throw new just.SystemError('Could Not Prepare Queries')
-    return this
-  }
-
-  async run (args) {
-    const { sock, size, bindings, exec } = this
-    const { buffer, off } = exec
-    const n = args.length
-    const first = size - n
-    const { callbacks } = sock
-    const results = []
-    let done = 0
-    return new Promise((resolve, reject) => {
-      for (const arg of args) {
-        bindings[done + first].set(arg)
-        callbacks.push(err => {
-          done++
-          if (err) {
-            reject(err)
-            return
-          }
-          const { state, dv } = sock.parser
-          const { start, rows } = state
-          if (rows === 1) {
-            const id = dv.getInt32(start + 11)
-            const randomnumber = dv.getInt32(start + 19)
-            results.push({ id, randomnumber })
-          } else {
-            just.error('multiple rows')
-          }
-          if (done === n) resolve(n === 1 ? results[0] : results)
-        })
-      }
-      if (n < size) {
-        const start = bindings[first].offsets.start
-        sock.write(buffer, exec.off - start, start)
-      } else {
-        sock.write(buffer, off, 0)
-      }
-    })
-  }
 }
 
 function createBatch (sock, query, size) {
