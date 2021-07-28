@@ -30,7 +30,7 @@ const constants = {
   }
 }
 
-const { INT4OID } = constants.fieldTypes
+const { INT4OID, VARCHAROID } = constants.fieldTypes
 const messageNames = {}
 Object.keys(constants.messageTypes).forEach(k => {
   messageNames[constants.messageTypes[k]] = k
@@ -39,12 +39,12 @@ constants.messageNames = messageNames
 
 constants.BinaryInt = {
   format: constants.formats.Binary,
-  oid: constants.fieldTypes.INT4OID
+  oid: INT4OID
 }
 
 constants.VarChar = {
   format: constants.formats.Text,
-  oid: constants.fieldTypes.VARCHAROID
+  oid: VARCHAROID
 }
 
 const {
@@ -65,8 +65,6 @@ function createParser (buf) {
   let parseNext = 0
   let parameters = {}
   const state = { start: 0, end: 0, rows: 0, running: false }
-
-  //if (freeList.length) return freeList.shift()
 
   function onDataRow (len, off) {
     // D = DataRow
@@ -262,6 +260,7 @@ function createParser (buf) {
 
   function onDefault (len, off) {
     off += len - 4
+    just.print('poopoo')
     parser.onMessage()
     return off
   }
@@ -274,7 +273,6 @@ function createParser (buf) {
     parseNext = 0
     state.start = state.end = state.rows = 0
     state.running = false
-    //freeList.push(parser)
   }
 
   const { messageTypes } = constants
@@ -462,6 +460,7 @@ async function createPool (config, poolSize, onConnect) {
       }
       if (type === AuthenticationOk || type === ParseComplete || type === NoData) {
         sock.callbacks.shift()()
+        // return
       }
     }
     sock.onData = bytes => parser.parse(bytes)
@@ -473,28 +472,24 @@ async function createPool (config, poolSize, onConnect) {
   return connections
 }
 
-function compileQuery (sock, opts, onComplete) {
-  const { callbacks } = sock
-  const buf = new ArrayBuffer(24 * 1024) // TODO
-  const { parser } = sock
-  const rbuf = parser.buf
-  const rdv = parser.dv
-  const ru8 = parser.u8
-  const dv = new DataView(buf)
-  let len = 0
-  const fun = {
-    dv,
-    size: 0,
-    described: false,
-    buffer: new ArrayBuffer(4096), // TODO
-    params: opts.params || [],
-    sql: opts.sql,
-    formats: opts.formats || [],
-    fields: opts.fields || [],
-    name: opts.name || '',
-    portal: opts.portal || '',
-    maxRows: opts.maxRows || 0,
-    messages: {
+class Query {
+  constructor (sock, name, sql, portal = '', formats = [], fields = [], params = [], maxQuery = 20) {
+    this.buffer = new ArrayBuffer(maxQuery * 256)
+    this.view = new DataView(this.buffer)
+    this.name = name
+    this.maxQuery = maxQuery
+    this.sql = sql
+    this.formats = formats
+    this.fields = fields
+    this.params = params
+    this.portal = portal
+    this.off = 0
+    this.batch = []
+    this.sock = sock
+  }
+
+  create (name) {
+    const offsets = {
       prepare: { start: 0, len: 0 },
       bind: { start: 0, len: 0 },
       exec: { start: 0, len: 0 },
@@ -502,290 +497,375 @@ function compileQuery (sock, opts, onComplete) {
       flush: { start: 0, len: 0 },
       close: { start: 0, len: 0 },
       sync: { start: 0, len: 0 }
-    },
-    paramStart: 0
-  }
-  const { name, sql, formats, fields, portal, maxRows } = fun
-  fun.buffer.offset = 0
-  fun.call = (onComplete, syncIt = true, flushIt = false) => {
-    const { params } = fun
-    let off = fun.paramStart
-    // 32 bit integers only for now
-    for (let i = 0; i < params.length; i++) {
-      off += 4
-      dv.setUint32(off, params[i])
-      off += 4
     }
-    const { bind, exec, flush, sync } = fun.messages
-    off = bind.start
+    const { sql, formats, fields, view, maxRows, portal, params, buffer } = this
+    let off = this.off
     let len = 0
-    if (flushIt) {
-      len = flush.start + flush.len - off
-    } else if (syncIt) {
-      len = sync.start + sync.len - off
-    } else {
-      len = exec.start + exec.len - off
-    }
-    const r = sock.write(buf, len, off)
-    if (r < len) {
-      just.error('short write')
-      return false
-    }
-    callbacks.push(onComplete)
-    return true
-  }
-  fun.append = (onComplete, syncIt = true, flushIt = false) => {
-    const { params } = fun
-    let off = fun.paramStart
-    // 32 bit integers only for now
-    for (let i = 0; i < params.length; i++) {
-      off += 4
-      dv.setUint32(off, params[i])
-      off += 4
-    }
-    const { bind, exec, flush, sync } = fun.messages
-    off = bind.start
-    let len = 0
-    if (flushIt) {
-      len = flush.start + flush.len - off
-    } else if (syncIt) {
-      len = sync.start + sync.len - off
-    } else {
-      len = exec.start + exec.len - off
-    }
-    fun.buffer.offset += fun.buffer.copyFrom(buf, fun.buffer.offset, len, off)
-    callbacks.push(onComplete)
-  }
-  fun.send = () => {
-    const r = sock.write(fun.buffer, fun.buffer.offset, 0)
-    if (r < len) {
-      just.error(`short write offset ${fun.buffer.offset} r ${r} len ${len}`)
-    }
-    fun.buffer.offset = 0
-  }
-  fun.bind = (flushIt = true, onComplete) => {
-    const { bind, flush } = fun.messages
-    sock.write(buf, bind.len, bind.start)
-    if (flushIt) {
-      sock.write(buf, flush.len, flush.start)
-    }
-    callbacks.push(onComplete)
-  }
-  fun.close = (flushIt = true, onComplete) => {
-    const { close, flush } = fun.messages
-    sock.write(buf, close.len, close.start)
-    if (flushIt) {
-      sock.write(buf, flush.len, flush.start)
-    }
-    callbacks.push(onComplete)
-  }
-  fun.exec = (flushIt = true, onComplete) => {
-    const { exec, flush } = fun.messages
-    sock.write(buf, exec.len, exec.start)
-    if (flushIt) {
-      sock.write(buf, flush.len, flush.start)
-    }
-    callbacks.push(onComplete)
-  }
-  fun.prepare = (flushIt = true, onComplete) => {
-    const { prepare, flush } = fun.messages
-    sock.write(buf, prepare.len, prepare.start)
-    if (flushIt) {
-      sock.write(buf, flush.len, flush.start)
-    }
-    callbacks.push(onComplete)
-  }
-  fun.describe = (flushIt = true, onComplete) => {
-    const { describe, flush } = fun.messages
-    sock.write(buf, describe.len, describe.start)
-    if (flushIt) {
-      sock.write(buf, flush.len, flush.start)
-    }
-    callbacks.push(onComplete)
-  }
-  let off = 0
-  // Prepare Message
-  fun.messages.prepare.start = off
-  len = 1 + 4 + sql.length + 1 + name.length + 1 + 2 + (formats.length * 4)
-  dv.setUint8(off++, 80) // 'P'
-  dv.setUint32(off, len - 1)
-  off += 4
-  off += buf.writeString(name, off)
-  dv.setUint8(off++, 0)
-  off += buf.writeString(sql, off)
-  dv.setUint8(off++, 0)
-  dv.setUint16(off, formats.length)
-  off += 2
-  for (let i = 0; i < formats.length; i++) {
-    dv.setUint32(off, formats[i].oid)
+    // Prepare Message
+    offsets.prepare.start = off
+    len = 1 + 4 + sql.length + 1 + name.length + 1 + 2 + (formats.length * 4)
+    view.setUint8(off++, 80) // 'P'
+    view.setUint32(off, len - 1)
     off += 4
-  }
-  fun.messages.prepare.len = off - fun.messages.prepare.start
-  // Describe Message
-  fun.messages.describe.start = off
-  len = 7 + name.length
-  dv.setUint8(off++, 68) // 'D'
-  dv.setUint32(off, len - 1)
-  off += 4
-  dv.setUint8(off++, 83) // 'S'
-  off += buf.writeString(name, off)
-  dv.setUint8(off++, 0)
-  fun.messages.describe.len = off - fun.messages.describe.start
-
-  // Bind Message
-  fun.messages.bind.start = off
-  dv.setUint8(off++, 66) // 'B'
-  off += 4 // length - will be filled in later
-  if (portal.length) {
-    off += buf.writeString(portal, off)
-    dv.setUint8(off++, 0)
-    off += buf.writeString(name, off)
-    dv.setUint8(off++, 0)
-  } else {
-    dv.setUint8(off++, 0)
-    off += buf.writeString(name, off)
-    dv.setUint8(off++, 0)
-  }
-  dv.setUint16(off, formats.length || 0)
-  off += 2
-  for (let i = 0; i < formats.length; i++) {
-    dv.setUint16(off, formats[i].format)
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    off += buffer.writeString(sql, off)
+    view.setUint8(off++, 0)
+    view.setUint16(off, formats.length)
     off += 2
-  }
-  dv.setUint16(off, fun.params.length || 0)
-  off += 2
-  fun.paramStart = off
-  for (let i = 0; i < fun.params.length; i++) {
-    if ((formats[i] || formats[0]).format === 1) {
-      dv.setUint32(off, 4)
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint32(off, formats[i].oid)
       off += 4
-      dv.setUint32(off, fun.params[i])
-      off += 4
+    }
+    offsets.prepare.len = off - offsets.prepare.start
+    // Describe Message
+    offsets.describe.start = off
+    len = 7 + name.length
+    view.setUint8(off++, 68) // 'D'
+    view.setUint32(off, len - 1)
+    off += 4
+    view.setUint8(off++, 83) // 'S'
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    offsets.describe.len = off - offsets.describe.start
+
+    // Bind Message
+    offsets.bind.start = off
+    view.setUint8(off++, 66) // 'B'
+    off += 4 // length - will be filled in later
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
     } else {
-      const paramString = fun.params[i].toString()
-      dv.setUint32(off, paramString.length)
-      off += 4
-      off += buf.writeString(paramString, off)
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
+    }
+    view.setUint16(off, formats.length || 0)
+    off += 2
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint16(off, formats[i].format)
+      off += 2
+    }
+    view.setUint16(off, params.length || 0)
+    off += 2
+    const paramStart = off
+    for (let i = 0; i < params.length; i++) {
+      if ((formats[i] || formats[0]).format === 1) {
+        view.setUint32(off, 4)
+        off += 4
+        view.setUint32(off, params[i])
+        off += 4
+      } else {
+        const paramString = params[i].toString()
+        view.setUint32(off, paramString.length)
+        off += 4
+        off += buffer.writeString(paramString, off)
+      }
+    }
+    view.setUint16(off, fields.length)
+    off += 2
+    for (let i = 0; i < fields.length; i++) {
+      view.setUint16(off, fields[i].format)
+      off += 2
+    }
+    offsets.bind.len = off - offsets.bind.start
+    view.setUint32(offsets.bind.start + 1, offsets.bind.len - 1)
+    // Exec Message
+    offsets.exec.start = off
+    len = 6 + portal.length + 4
+    view.setUint8(off++, 69) // 'E'
+    view.setUint32(off, len - 1)
+    off += 4
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+    }
+    view.setUint8(off++, 0)
+    view.setUint32(off, maxRows)
+    off += 4
+    offsets.exec.len = off - offsets.exec.start
+    // Sync Message
+    offsets.sync.start = off
+    view.setUint8(off++, 83) // 'S'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.sync.len = off - offsets.sync.start
+
+    // Flush Message
+    offsets.flush.start = off
+    view.setUint8(off++, 72) // 'H'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.flush.len = off - offsets.flush.start
+
+    // Close Statement Message
+    offsets.close.start = off
+    view.setUint8(off++, 67) // 'C'
+    view.setUint32(off, 6 + name.length)
+    off += 4
+    view.setUint8(off++, 83) // 'S'
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    offsets.close.len = off - offsets.close.start
+    return { paramStart, off, start: this.off + 1, size: off - this.off, offsets }
+  }
+
+  add (n = 1) {
+    for (let i = 0; i < n; i++) {
+      const query = this.create(this.name)
+      this.batch.push(query)
+      this.off = query.off
     }
   }
-  dv.setUint16(off, fields.length)
-  off += 2
-  for (let i = 0; i < fields.length; i++) {
-    dv.setUint16(off, fields[i].format)
+
+  bind (n = 0) {
+    const { sock, batch, buffer } = this
+    return new Promise(resolve => {
+      const query = batch[n]
+      const { offsets } = query
+      const { bind, flush } = offsets
+      const len = flush.start + flush.len - bind.start
+      sock.callbacks.push(resolve)
+      sock.write(buffer, len, bind.start)
+    })
+  }
+
+  prepare (n = 0) {
+    const { sock, batch, buffer } = this
+    return new Promise(resolve => {
+      const query = batch[n]
+      const { offsets } = query
+      const { prepare, flush } = offsets
+      sock.write(buffer, prepare.len, prepare.start)
+      sock.callbacks.push(resolve)
+      sock.write(buffer, flush.len, flush.start)
+    })
+  }
+
+  describe (n = 0) {
+    const { sock, batch, buffer } = this
+    return new Promise(resolve => {
+      const query = batch[n]
+      const { offsets } = query
+      const { describe, flush } = offsets
+      sock.write(buffer, describe.len, describe.start)
+      sock.callbacks.push(resolve)
+      sock.write(buffer, flush.len, flush.start)
+    })
+  }
+
+  exec (n = 0, id) {
+    const { sock, view, batch, buffer } = this
+    return new Promise((resolve, reject) => {
+      const query = batch[n]
+      const { offsets, paramStart } = query
+      const { bind, flush } = offsets
+      const len = flush.start + flush.len - bind.start
+      view.setUint32(paramStart + 4, id)
+      sock.callbacks.push(err => {
+        if (err) {
+          reject(err)
+          return
+        }
+        const { state, dv } = sock.parser
+        const { start, rows } = state
+        if (rows === 1) {
+          const id = dv.getInt32(start + 11)
+          const randomnumber = dv.getInt32(start + 19)
+          resolve({ id, randomnumber })
+          return
+        }
+        resolve({ id: 0, randomnumber: 0 })
+      })
+      sock.write(buffer, len, bind.start)
+    })
+  }
+}
+
+class Messaging {
+  constructor (buffer, { formats, portal, name, params, fields, maxRows = 100 }) {
+    this.buffer = buffer
+    this.view = new DataView(buffer)
+    this.bytes = new Uint8Array(buffer)
+    this.off = 0
+    this.formats = formats
+    this.portal = portal
+    this.name = name
+    this.params = params
+    this.fields = fields
+    this.maxRows = maxRows
+    this.index = 0
+  }
+
+  createFlushMessage (off = this.off) {
+    const { view } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    view.setUint8(off++, 72) // 'H'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.len = off - offsets.start
+    return { off, offsets }
+  }
+
+  createSyncMessage (off = this.off) {
+    const { view } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    view.setUint8(off++, 83) // 'S'
+    view.setUint32(off, 4)
+    off += 4
+    offsets.len = off - offsets.start
+    return { off, offsets }
+  }
+
+  createExecMessage (off = this.off) {
+    const { view, buffer, portal, maxRows } = this
+    const offsets = { start: 0, end: 0 }
+    offsets.start = off
+    const len = 6 + portal.length + 4
+    view.setUint8(off++, 69) // 'E'
+    view.setUint32(off, len - 1)
+    off += 4
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+    }
+    view.setUint8(off++, 0)
+    view.setUint32(off, maxRows)
+    off += 4
+    offsets.len = off - offsets.start
+    return { len, off, offsets }
+  }
+
+  createBindMessage (off = this.off) {
+    const { view, buffer, formats, portal, name, params, fields } = this
+    const offsets = { start: 0, end: 0 }
+    // Bind Message
+    offsets.start = off
+    view.setUint8(off++, 66) // 'B'
+    off += 4 // length - will be filled in later
+    if (portal.length) {
+      off += buffer.writeString(portal, off)
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
+    } else {
+      view.setUint8(off++, 0)
+      off += buffer.writeString(name, off)
+      view.setUint8(off++, 0)
+    }
+    view.setUint16(off, formats.length || 0)
     off += 2
-  }
-  fun.messages.bind.len = off - fun.messages.bind.start
-  dv.setUint32(fun.messages.bind.start + 1, fun.messages.bind.len - 1)
-  // Exec Message
-  fun.messages.exec.start = off
-  len = 6 + portal.length + 4
-  dv.setUint8(off++, 69) // 'E'
-  dv.setUint32(off, len - 1)
-  off += 4
-  if (portal.length) {
-    off += buf.writeString(portal, off)
-  }
-  dv.setUint8(off++, 0)
-  dv.setUint32(off, maxRows)
-  off += 4
-  fun.messages.exec.len = off - fun.messages.exec.start
-  // Sync Message
-  fun.messages.sync.start = off
-  dv.setUint8(off++, 83) // 'S'
-  dv.setUint32(off, 4)
-  off += 4
-  fun.messages.sync.len = off - fun.messages.sync.start
-
-  // Flush Message
-  fun.messages.flush.start = off
-  dv.setUint8(off++, 72) // 'H'
-  dv.setUint32(off, 4)
-  off += 4
-  fun.messages.flush.len = off - fun.messages.flush.start
-
-  // Close Statement Message
-  fun.messages.close.start = off
-  dv.setUint8(off++, 67) // 'C'
-  dv.setUint32(off, 6 + name.length)
-  off += 4
-  dv.setUint8(off++, 83) // 'S'
-  off += buf.writeString(name, off)
-  dv.setUint8(off++, 0)
-  fun.messages.close.len = off - fun.messages.close.start
-
-  fun.size = off
-  fun.buf = buf.slice(0, off)
-  fun.getRows = () => {
-    const { start, rows } = parser.state
-    let off = start
-    let f = fields
-    if (!fields.length) f = opts.fields
-    const result = []
-    let i = 0
-    let j = 0
-    let row
-    for (i = 0; i < rows; i++) {
-      off += 5
-      const cols = rdv.getUint16(off)
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint16(off, formats[i].format)
       off += 2
-      row = Array(cols)
-      result.push(row)
-      for (j = 0; j < cols; j++) {
-        len = rdv.getUint32(off)
-        const { oid, format } = (f[j] || f[0])
+    }
+    view.setUint16(off, params.length || 0)
+    off += 2
+    const paramStart = off
+    for (let i = 0; i < params.length; i++) {
+      if ((formats[i] || formats[0]).format === 1) {
+        view.setUint32(off, 4)
         off += 4
-        if (format === 0) { // Non-Binary
-          if (oid === INT4OID) {
-            row[j] = parseInt(rbuf.readString(len, off), 10)
+        view.setUint32(off, params[i])
+        off += 4
+      } else {
+        const paramString = params[i].toString()
+        view.setUint32(off, paramString.length)
+        off += 4
+        off += buffer.writeString(paramString, off)
+      }
+    }
+    view.setUint16(off, fields.length)
+    off += 2
+    for (let i = 0; i < fields.length; i++) {
+      view.setUint16(off, fields[i].format)
+      off += 2
+    }
+    offsets.len = off - offsets.start
+    view.setUint32(offsets.start + 1, offsets.len - 1)
+    return {
+      off,
+      offsets,
+      paramStart,
+      set: (...args) => {
+        let off = paramStart
+        for (let i = 0; i < params.length; i++) {
+          if ((formats[i] || formats[0]).format === 1) {
+            view.setUint32(off + 4, args[i])
+            off += 4
           } else {
-            row[j] = rbuf.readString(len, off)
-          }
-        } else {
-          if (oid === INT4OID) {
-            row[j] = rdv.getInt32(off)
-          } else {
-            row[j] = rbuf.slice(off, off + len)
+            const paramString = args[i].toString()
+            view.setUint32(paramStart, paramString.length)
+            off += 4
+            off += buffer.writeString(paramString, off)
           }
         }
-        off += len
-      }
-      if (ru8[off] === 84) {
-        len = rdv.getUint32(off + 1)
-        off += len
       }
     }
-    return result
   }
-  if (!onComplete) return fun
-  fun.prepare(true, err => {
-    if (err) {
-      onComplete(err, null)
-      return
-    }
-    fun.describe(true, err => {
-      if (err) {
-        onComplete(err, null)
-        return
-      }
-      onComplete(null, fun)
-    })
-  })
-  return fun
 }
 
-function compile (sock, sql, name, fields = [], formats = [], params = [], maxRows = 1024) {
-  const opts = { sql, formats, fields, params, name, maxRows }
-  return new Promise((resolve, reject) => {
-    compileQuery(sock, opts, (err, fun) => {
-      if (err) {
-        reject(err)
+function createBatchMessages (size, query, sock) {
+  const m = new Messaging(new ArrayBuffer(128 * size), query)
+  const binds = []
+  const execs = []
+  for (let i = 0; i < size; i++) {
+    const bind = m.createBindMessage()
+    binds.push(bind)
+    m.off = bind.off
+    const exec = m.createExecMessage()
+    execs.push(exec)
+    m.off = exec.off
+  }
+  const sync = m.createSyncMessage()
+  m.off = sync.off
+  const flush = m.createFlushMessage()
+  m.off = flush.off
+  return (...args) => {
+    const n = args.length
+    args.forEach((a, i) => binds[i].set(a))
+    let len = args.length
+    let todo = len
+    const results = []
+    return new Promise((resolve, reject) => {
+      while (len--) {
+        sock.callbacks.push(err => {
+          if (err) {
+            reject(err)
+            return
+          }
+          todo--
+          const { state, dv } = sock.parser
+          const { start, rows } = state
+          if (rows === 1) {
+            const id = dv.getInt32(start + 11)
+            const randomnumber = dv.getInt32(start + 19)
+            results.push({ id, randomnumber })
+          }
+          if (!todo) resolve(results.length > 1 ? results : results[0])
+        })
+      }
+      if (n < size) {
+        sock.write(m.buffer, execs[n - 1].off, 0)
+        sock.write(m.buffer, flush.off - execs[execs.length - 1].off, execs[execs.length - 1].off)
         return
       }
-      resolve(fun)
+      sock.write(m.buffer, m.off, 0)
     })
-  })
+  }
 }
 
-const api = { connect, start, authenticate }
+async function compile (sock, name, sql, portal, formats, fields, params) {
+  const query = new Query(sock, name, sql, portal, formats, fields, params)
+  query.add(1)
+  await Promise.all(query.batch.map((q, i) => query.prepare(i)))
+  await Promise.all(query.batch.map((q, i) => query.describe(i)))
+  return (...args) => {
+    return query.exec(0, ...args)
+  }
+}
 
-module.exports = { constants, createPool, compile }
+module.exports = { constants, createPool, compile, createBatchMessages }
