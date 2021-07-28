@@ -699,6 +699,45 @@ class Messaging {
     this.index = 0
   }
 
+  createPrepareMessage (off = this.off) {
+    const { view, buffer, formats, name, sql } = this
+    const offsets = { start: 0, end: 0 }
+    // Prepare Message
+    offsets.start = off
+    const len = 1 + 4 + sql.length + 1 + name.length + 1 + 2 + (formats.length * 4)
+    view.setUint8(off++, 80) // 'P'
+    view.setUint32(off, len - 1)
+    off += 4
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    off += buffer.writeString(sql, off)
+    view.setUint8(off++, 0)
+    view.setUint16(off, formats.length)
+    off += 2
+    for (let i = 0; i < formats.length; i++) {
+      view.setUint32(off, formats[i].oid)
+      off += 4
+    }
+    offsets.len = off - offsets.start
+    return { off, offsets, len }
+  }
+
+  createDescribeMessage (off = this.off) {
+    const { view, buffer, name } = this
+    const offsets = { start: 0, end: 0 }
+    // Describe Message
+    offsets.start = off
+    const len = 7 + name.length
+    view.setUint8(off++, 68) // 'D'
+    view.setUint32(off, len - 1)
+    off += 4
+    view.setUint8(off++, 83) // 'S'
+    off += buffer.writeString(name, off)
+    view.setUint8(off++, 0)
+    offsets.len = off - offsets.start
+    return { offsets, off, len }
+  }
+
   createFlushMessage (off = this.off) {
     const { view } = this
     const offsets = { start: 0, end: 0 }
