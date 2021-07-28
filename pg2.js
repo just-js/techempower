@@ -686,13 +686,10 @@ class Batch {
     const n = args.length
     const first = size - n
     const { callbacks } = sock
-    const results = []
-    let done = 0
-    return new Promise((resolve, reject) => {
-      for (const arg of args) {
-        bindings[done + first].set(arg)
+    const promises = args.map((arg, i) => {
+      bindings[i + first].set(arg)
+      return new Promise((resolve, reject) => {
         callbacks.push(err => {
-          done++
           if (err) {
             reject(err)
             return
@@ -702,25 +699,27 @@ class Batch {
           if (rows === 1) {
             const id = dv.getInt32(start + 11)
             const randomnumber = dv.getInt32(start + 19)
-            results.push({ id, randomnumber })
-          } else {
-            just.error('multiple rows')
+            resolve({ id, randomnumber })
           }
-          if (done === n) resolve(n === 1 ? results[0] : results)
         })
-      }
-      if (n < size) {
-        const start = bindings[first].offsets.start
-        sock.write(buffer, exec.off - start, start)
-      } else {
-        sock.write(buffer, off, 0)
-      }
+      })
     })
+    if (n < size) {
+      const start = bindings[first].offsets.start
+      sock.write(buffer, exec.off - start, start)
+    } else {
+      sock.write(buffer, off, 0)
+    }
+    const results = await Promise.all(promises)
+    return n === 1 ? results[0] : results
   }
 }
 
-function createBatch (sock, query, size) {
-  return (new Batch(sock, query, size)).setup().compile()
+async function createBatch (sock, query, size) {
+  const batch = new Batch(sock, query, size)
+  batch.setup()
+  await batch.compile()
+  return (...args) => batch.run(args)
 }
 
 module.exports = { constants, createPool, createBatch }
