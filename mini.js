@@ -4,14 +4,14 @@ const postgres = require('pg.js')
 
 const config = require('techempower.config.js')
 
-const { createPool, compile, createBatchMessages } = postgres
+const { createPool, compile, createBatch } = postgres
 const { createServer } = justify
 const { sjs, attr } = stringify
 const { maxRandom, maxQuery } = config
 const { port, address } = config.server
 
 const ar = {}
-for (let i = 1; i < 100; i++) {
+for (let i = 1; i <= 100; i++) {
   ar[i] = (new Array(i)).fill(1)
 }
 
@@ -24,21 +24,31 @@ async function onConnect (sock) {
   const { worlds } = config.queries
   const { name, sql, portal, formats, fields, params } = worlds
   sock.getWorldById = await compile(sock, name, sql, portal, formats, fields, params)
-  sock.getWorldByIdMulti = createBatchMessages(10, worlds, sock)
+  sock.getWorldByIdB = await createBatch(sock, worlds, maxQuery)
 }
 
-async function main (args) {
+async function main () {
   const sDB = sjs({ id: attr('number'), randomnumber: attr('number') })
   const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
   const connections = await createPool(config.db, poolSize, onConnect)
   const server = createServer()
     .get('/db', async (req, res) => {
+      const { getWorldByIdB } = res.socket.connection
+      res.json(sDB(await getWorldByIdB(getRandom())))
+    })
+    .get('/db2', async (req, res) => {
       const { getWorldById } = res.socket.connection
       res.json(sDB(await getWorldById(getRandom())))
     })
     .get('/query', async (req, res) => {
-      const { getWorldByIdMulti } = res.socket.connection
-      res.json(`[${(await getWorldByIdMulti(...spray(getCount(req.query), getRandom))).map(sDB).join(comma)}]`)
+      const { getWorldByIdB } = res.socket.connection
+      const count = getCount(req.query)
+      if (count === 1) {
+        res.json(sDB(await getWorldByIdB(getRandom())))
+        return
+      }
+      const args = spray(getCount(req.query), getRandom)
+      res.json(`[${(await getWorldByIdB(...args)).map(sDB).join(comma)}]`)
     }, { qs: true })
     .connect(sock => {
       sock.connection = connections[sock.fd % poolSize]
@@ -48,4 +58,4 @@ async function main (args) {
   server.stackTraces = true
 }
 
-main(just.args.slice(2)).catch(err => just.error(err.stack))
+main().catch(err => just.error(err.stack))

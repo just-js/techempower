@@ -847,7 +847,7 @@ class Messaging {
   }
 }
 
-function createBatchMessages (size, query, sock) {
+function createBatch (sock, query, size) {
   const m = new Messaging(new ArrayBuffer(128 * size), query)
   const binds = []
   const execs = []
@@ -865,8 +865,9 @@ function createBatchMessages (size, query, sock) {
   m.off = flush.off
   return (...args) => {
     const n = args.length
-    args.forEach((a, i) => binds[i].set(a))
-    let len = args.length
+    const first = size - n
+    args.forEach((a, i) => binds[i + first].set(a))
+    let len = n
     let todo = len
     const results = []
     return new Promise((resolve, reject) => {
@@ -884,12 +885,13 @@ function createBatchMessages (size, query, sock) {
             const randomnumber = dv.getInt32(start + 19)
             results.push({ id, randomnumber })
           }
-          if (!todo) resolve(results.length > 1 ? results : results[0])
+          if (!todo) resolve(n === 1 ? results[0] : results)
         })
       }
       if (n < size) {
-        sock.write(m.buffer, execs[n - 1].off, 0)
-        sock.write(m.buffer, flush.off - execs[execs.length - 1].off, execs[execs.length - 1].off)
+        const start = binds[first].offsets.start
+        const len = flush.off - start
+        sock.write(m.buffer, len, start)
         return
       }
       sock.write(m.buffer, m.off, 0)
@@ -907,4 +909,4 @@ async function compile (sock, name, sql, portal, formats, fields, params) {
   }
 }
 
-module.exports = { constants, createPool, compile, createBatchMessages }
+module.exports = { constants, createPool, compile, createBatch }
