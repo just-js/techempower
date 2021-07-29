@@ -232,7 +232,7 @@ class Batch {
       const exec = m.createExecMessage()
       m.off = exec.off
     }
-    let sync = m.createSyncMessage()
+    const sync = m.createSyncMessage()
     m.off = sync.off
     let flush = m.createFlushMessage()
     m.off = flush.off
@@ -248,34 +248,8 @@ class Batch {
     return this
   }
 
-  // todo - allow this to be compiled
-  write (batchArgs, first) {
-    const { bindings, query, exec } = this
-    const { params, formats } = query
-    const { view, buffer } = exec
-    const paramLen = params.length
-    let next = 0
-    for (let args of batchArgs) {
-      const { paramStart } = bindings[next + first]
-      let off = paramStart
-      if (args.constructor.name !== 'Array') args = [args]
-      for (let i = 0; i < paramLen; i++) {
-        if ((formats[i] || formats[0]).format === 1) {
-          view.setUint32(off + 4, args[i])
-          off += 4
-        } else {
-          const paramString = args[i].toString()
-          view.setUint32(paramStart, paramString.length)
-          off += 4
-          off += buffer.writeString(paramString, off)
-        }
-      }
-      next++
-    }
-  }
-
   // prepare the sql statement on the server
-  compile () {
+  create () {
     const batch = this
     const { sock, prepare } = this
     return new Promise((resolve, reject) => {
@@ -285,6 +259,101 @@ class Batch {
       if (r <= 0) reject(new just.SystemError('Could Not Prepare Queries'))
     })
   }
+
+  compile ({ read, write }) {
+    const { query } = this
+    // todo. needs to be compiled in a separate context
+    if (read.length) this.read = just.vm.compile(read, `${query.name}r.js`, [], [])
+    if (write.length) this.write = just.vm.compile(write, `${query.name}w.js`, ['batchArgs', 'first'], [])
+  }
+
+  generate () {
+    const { query } = this
+    const { params, formats } = query
+    const fields = []
+    for (let i = 0; i < query.fields.length; i++) {
+      fields.push({ name: query.fieldNames[i], oid: query.fields[i].oid })
+    }
+
+    const source = []
+
+    source.push('  const { sock } = this')
+    source.push('  const { state, dv, buf } = sock.parser')
+    source.push('  const { start, rows } = state')
+    source.push('  let off = start + 11')
+    source.push('  if (rows === 1) {')
+    for (const field of fields) {
+      const { name, oid } = field
+      if (oid === INT4OID) {
+        source.push(`    const ${name} = dv.getInt32(off)`)
+        source.push('    off += 4')
+      } else if (oid === VARCHAROID) {
+        source.push('    const len = dv.getUint32(off)')
+        source.push('    off += 4')
+        source.push(`    const ${name} = buf.readString(len, off)`)
+        source.push('    off += len')
+      }
+    }
+    source.push(`    return { ${fields.map(f => f.name).join(', ')} }`)
+    source.push('  }')
+    source.push('  const result = []')
+    source.push('  off = start + 11')
+    source.push('  for (let i = 0; i < rows; i++) {')
+    for (const field of fields) {
+      const { name, oid } = field
+      if (oid === INT4OID) {
+        source.push(`    const ${name} = dv.getInt32(off)`)
+        source.push('    off += 4')
+      } else if (oid === VARCHAROID) {
+        source.push('    const len = dv.getUint32(off)')
+        source.push('    off += 4')
+        source.push(`    const ${name} = buf.readString(len, off)`)
+        source.push('    off += len')
+        source.push('    off += 11')
+      }
+    }
+    source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
+    source.push('  }')
+    source.push('  return result')
+    const read = source.join('\n')
+
+    source.length = 0
+    if (params.length) {
+      source.push('const { bindings, query, exec } = this')
+      source.push('const { formats } = query')
+      source.push('const { view, buffer } = exec')
+      source.push('let next = 0')
+      source.push('for (let args of batchArgs) {')
+      source.push('  const { paramStart } = bindings[next + first]')
+      source.push('  let off = paramStart')
+      for (let i = 0; i < params.length; i++) {
+        if ((formats[i] || formats[0]).format === constants.formats.Binary) {
+          if (params.length === 1) {
+            source.push('  view.setUint32(off + 4, args)')
+          } else {
+            source.push(`  view.setUint32(off + 4, args[${i}])`)
+          }
+          source.push('  off += 4')
+        } else {
+          if (params.length === 1) {
+            source.push('  const paramString = args.toString()')
+          } else {
+            source.push(`  const paramString = args[${i}].toString()`)
+          }
+          source.push('  view.setUint32(paramStart, paramString.length)')
+          source.push('  off += 4')
+          source.push('  off += buffer.writeString(paramString, off)')
+        }
+      }
+      source.push('  next++')
+      source.push('}')
+    }
+    const write = source.join('\n')
+    return { read, write }
+  }
+
+  // todo - allow this to be compiled
+  write (batchArgs, first) {}
 
   // read the current rows from the buffers - to be overridden
   read () {
@@ -589,84 +658,6 @@ function createParser (buf) {
   return parser
 }
 
-function generateSource (name, fields, params, formats) {
-  const source = []
-
-  source.push('  const { sock } = this')
-  source.push('  const { state, dv, buf } = sock.parser')
-  source.push('  const { start, rows } = state')
-  source.push('  let off = start + 11')
-  source.push('  if (rows === 1) {')
-  for (const field of fields) {
-    const { name, oid } = field
-    if (oid === INT4OID) {
-      source.push(`    const ${name} = dv.getInt32(off)`)
-      source.push('    off += 4')
-    } else if (oid === VARCHAROID) {
-      source.push('    const len = dv.getUint32(off)')
-      source.push('    off += 4')
-      source.push(`    const ${name} = buf.readString(len, off)`)
-      source.push('    off += len')
-    }
-  }
-  source.push(`    return { ${fields.map(f => f.name).join(', ')} }`)
-  source.push('  }')
-  source.push('  const result = []')
-  source.push('  off = start + 11')
-  source.push('  for (let i = 0; i < rows; i++) {')
-  for (const field of fields) {
-    const { name, oid } = field
-    if (oid === INT4OID) {
-      source.push(`    const ${name} = dv.getInt32(off)`)
-      source.push('    off += 4')
-    } else if (oid === VARCHAROID) {
-      source.push('    const len = dv.getUint32(off)')
-      source.push('    off += 4')
-      source.push(`    const ${name} = buf.readString(len, off)`)
-      source.push('    off += len')
-      source.push('    off += 11')
-    }
-  }
-  source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
-  source.push('  }')
-  source.push('  return result')
-  const read = source.join('\n')
-
-  source.length = 0
-  if (params.length) {
-    source.push('const { bindings, query, exec } = this')
-    source.push('const { formats } = query')
-    source.push('const { view, buffer } = exec')
-    source.push('let next = 0')
-    source.push('for (let args of batchArgs) {')
-    source.push('  const { paramStart } = bindings[next + first]')
-    source.push('  let off = paramStart')
-    for (let i = 0; i < params.length; i++) {
-      if ((formats[i] || formats[0]).format === constants.formats.Binary) {
-        if (params.length === 1) {
-          source.push('  view.setUint32(off + 4, args)')
-        } else {
-          source.push(`  view.setUint32(off + 4, args[${i}])`)
-        }
-        source.push('  off += 4')
-      } else {
-        if (params.length === 1) {
-          source.push('  const paramString = args.toString()')
-        } else {
-          source.push(`  const paramString = args[${i}].toString()`)
-        }
-        source.push('  view.setUint32(paramStart, paramString.length)')
-        source.push('  off += 4')
-        source.push('  off += buffer.writeString(paramString, off)')
-      }
-    }
-    source.push('  next++')
-    source.push('}')
-  }
-  const write = source.join('\n')
-  return { read, write }
-}
-
 function startupMessage (db) {
   const { user, database, version = 0x00030000, parameters = [] } = db
   let len = 8 + 4 + 1 + user.length + 1 + 8 + 1 + database.length + 2
@@ -827,4 +818,4 @@ function createBatch (sock, query, size) {
   return (new Batch(sock, query, size)).setup()
 }
 
-module.exports = { constants, createPool, createBatch, generateSource }
+module.exports = { constants, createPool, createBatch }
