@@ -232,21 +232,24 @@ class Batch {
       const exec = m.createExecMessage()
       m.off = exec.off
     }
-    const sync = m.createSyncMessage()
+    let sync = m.createSyncMessage()
     m.off = sync.off
-    const flush = m.createFlushMessage()
+    let flush = m.createFlushMessage()
     m.off = flush.off
     const p = new Messaging(new ArrayBuffer(256), query)
     const prepare = p.createPrepareMessage()
     p.off = prepare.off
     const describe = p.createDescribeMessage()
     p.off = describe.off
+    flush = p.createFlushMessage()
+    p.off = flush.off
     this.exec = m
     this.prepare = p
     return this
   }
 
-  set (batchArgs, first) {
+  // todo - allow this to be compiled
+  write (batchArgs, first) {
     const { bindings, query, exec } = this
     const { params, formats } = query
     const { view, buffer } = exec
@@ -273,34 +276,19 @@ class Batch {
 
   // prepare the sql statement on the server
   compile () {
+    const batch = this
     const { sock, prepare } = this
-    sock.callbacks.push(voidFn)
-    sock.callbacks.push(voidFn)
-    const r = sock.write(prepare.buffer, prepare.off, 0)
-    if (r <= 0) throw new just.SystemError('Could Not Prepare Queries')
-    return this
+    return new Promise((resolve, reject) => {
+      sock.callbacks.push(() => {})
+      sock.callbacks.push(() => resolve(batch))
+      const r = sock.write(prepare.buffer, prepare.off, 0)
+      if (r <= 0) reject(new just.SystemError('Could Not Prepare Queries'))
+    })
   }
 
-  // read the current rows from the buffers
+  // read the current rows from the buffers - to be overridden
   read () {
-    const { sock } = this
-    const { state, dv } = sock.parser
-    const { start, rows } = state
-    if (rows === 1) {
-      const id = dv.getInt32(start + 11)
-      const randomnumber = dv.getInt32(start + 19)
-      return { id, randomnumber }
-    }
-    just.error('multiple rows')
-    const result = []
-    let off = start + 11
-    for (let i = 0; i < rows; i++) {
-      const id = dv.getInt32(off)
-      const randomnumber = dv.getInt32(off + 8)
-      result.push({ id, randomnumber })
-      off += 8
-    }
-    return result
+    return []
   }
 
   // async wait for results of all queries, read them and resolve the promise
@@ -327,14 +315,14 @@ class Batch {
 
   // the 1 or more of the batch queries, passing in an array of arguments
   // for each query we are running. args = [[a,b],[a,c],[b.c]] or [a,b,c]
-  run (args) {
+  run (args = [[]]) {
     const batch = this
     const { sock, size, bindings, exec } = this
     const { buffer, off } = exec
     const n = args.length
     const first = size - n
     // write the arguments into the query buffers
-    batch.set(args, first)
+    batch.write(args, first)
     // create a promise which will resolve with results of all queries
     const promise = batch.wait(args)
     // write the queries onto the wire
@@ -601,6 +589,49 @@ function createParser (buf) {
   return parser
 }
 
+function generateSource (name, fields) {
+  const source = []
+  source.push('  const { sock } = this')
+  source.push('  const { state, dv, buf } = sock.parser')
+  source.push('  const { start, rows } = state')
+  source.push('  let off = start + 11')
+  source.push('  if (rows === 1) {')
+  for (const field of fields) {
+    const { name, oid } = field
+    if (oid === INT4OID) {
+      source.push(`    const ${name} = dv.getInt32(off)`)
+      source.push('    off += 4')
+    } else if (oid === VARCHAROID) {
+      source.push('    const len = dv.getUint32(off)')
+      source.push('    off += 4')
+      source.push(`    const ${name} = buf.readString(len, off)`)
+      source.push('    off += len')
+    }
+  }
+  source.push(`    return { ${fields.map(f => f.name).join(', ')} }`)
+  source.push('  }')
+  source.push('  const result = []')
+  source.push('  off = start + 11')
+  source.push('  for (let i = 0; i < rows; i++) {')
+  for (const field of fields) {
+    const { name, oid } = field
+    if (oid === INT4OID) {
+      source.push(`    const ${name} = dv.getInt32(off)`)
+      source.push('    off += 4')
+    } else if (oid === VARCHAROID) {
+      source.push('    const len = dv.getUint32(off)')
+      source.push('    off += 4')
+      source.push(`    const ${name} = buf.readString(len, off)`)
+      source.push('    off += len')
+      source.push('    off += 11')
+    }
+  }
+  source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
+  source.push('  }')
+  source.push('  return result')
+  return source.join('\n')
+}
+
 function startupMessage (db) {
   const { user, database, version = 0x00030000, parameters = [] } = db
   let len = 8 + 4 + 1 + user.length + 1 + 8 + 1 + database.length + 2
@@ -701,7 +732,7 @@ function connect (config, buffer) {
   })
 }
 
-async function createConnection (config, connections, onConnect) {
+async function createConnection (config) {
   const sock = await connect(config, new ArrayBuffer(config.bufferSize))
   const defaultAction = (...args) => sock.callbacks.shift()(...args)
   const actions = {
@@ -728,26 +759,37 @@ async function createConnection (config, connections, onConnect) {
   sock.callbacks = []
   sock.authenticated = false
   const parser = sock.parser = createParser(sock.buffer)
-  parser.onMessage = () => (actions[parser.type] || voidFn)()
+  // parser.onMessage = () => (actions[parser.type] || voidFn)()
+  const stats = {}
+  for (const k of Object.keys(constants.messageTypes)) {
+    stats[constants.messageTypes[k]] = 0
+  }
+  parser.onMessage = () => {
+    stats[parser.type]++
+    (actions[parser.type] || voidFn)()
+  }
+  parser.stats = () => {
+    const o = Object.assign({}, stats)
+    for (const k of Object.keys(stats)) stats[k] = 0
+    return o
+  }
   sock.onData = bytes => parser.parse(bytes)
   await start(sock)
   await authenticate(sock, parser.salt)
-  await onConnect(sock)
   return sock
 }
 
 // External
-async function createPool (config, poolSize, onConnect) {
+function createPool (config, poolSize) {
   const connections = []
   for (let i = 0; i < poolSize; i++) {
-    const sock = await createConnection(config, connections, onConnect)
-    connections.push(sock)
+    connections.push(createConnection(config))
   }
-  return connections
+  return Promise.all(connections)
 }
 
 function createBatch (sock, query, size) {
-  return (new Batch(sock, query, size)).setup().compile()
+  return (new Batch(sock, query, size)).setup()
 }
 
-module.exports = { constants, createPool, createBatch }
+module.exports = { constants, createPool, createBatch, generateSource }

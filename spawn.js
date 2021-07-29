@@ -1,5 +1,5 @@
 const { launch, watch } = just.process
-const { readStat } = require('lib/monitor.js')
+const { readStat } = require('monitor.js')
 
 const { STDOUT_FILENO, STDERR_FILENO } = just.sys
 

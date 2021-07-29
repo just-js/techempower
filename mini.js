@@ -2,45 +2,50 @@ const stringify = require('@stringify')
 const justify = require('@justify')
 const postgres = require('pg.js')
 const util = require('util.js')
+const html = require('@html')
 
 const config = require('techempower.config.js')
 
 const { createPool, createBatch } = postgres
 const { createServer } = justify
 const { sjs, attr } = stringify
-const { maxRandom, maxQuery, server, queries, db } = config
+const { maxRandom, maxQuery, server, queries, db, templates } = config
 const { port, address } = server
 const { spray } = util
-const { worlds } = queries
 
-const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
+function sortByMessage (a, b) {
+  if (a.message > b.message) return 1
+  if (a.message < b.message) return -1
+  return 0
+}
+
+async function setup (sock) {
+  const { worlds, fortunes } = queries
+  const fortunesBatch = await createBatch(sock, fortunes, maxQuery).compile()
+  sock.getAllFortunes = () => fortunesBatch.run()
+  let src = postgres.generateSource('getAllFortunes', sock.parser.fields)
+  fortunesBatch.read = just.vm.compile(src, 'fortunesBatch.js', [], [])
+  const worldsBatch = await createBatch(sock, worlds, maxQuery).compile()
+  sock.getWorldById = (...args) => worldsBatch.run(args)
+  src = postgres.generateSource('getWorlds', sock.parser.fields)
+  worldsBatch.read = just.vm.compile(src, 'worldsBatch.js', [], [])
+}
 
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
 const getCount = qs => Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1
+
+const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
+const extra = { id: 0, message: 'Additional fortune added at request time.' }
 const jsonify = sjs({ id: attr('number'), randomnumber: attr('number') })
 const sJSON = sjs({ message: attr('string') })
 const message = 'Hello, World!'
 const json = { message }
+const fortunes = html.load(templates.fortunes, templates.settings)
 
 async function main () {
-  async function onConnect (sock) {
-    const batch = await createBatch(sock, worlds, maxQuery)
-    sock.getWorldById = (...args) => batch.run(args)
-  }
-  const pool = await createPool(db, poolSize, onConnect)
-  just.setInterval(() => {
-    const stat = { call: { send: 0, recv: 0 }, data: { send: 0, recv: 0 } }
-    for (const sock of pool) {
-      const { call, data } = sock.stats()
-      stat.call.send += call.send
-      stat.call.recv += call.recv
-      stat.data.send += data.send
-      stat.data.recv += data.recv
-    }
-    const cpu = just.cpuUsage()
-    const mem = just.memoryUsage()
-    just.print(require('util.js').stringify({ stat, mem, cpu }))
-  }, 1000)
+  const pool = await createPool(db, poolSize)
+  await Promise.all(pool.map(sock => setup(sock)))
+  //const timer = util.monitor(pool)
 
   const server = createServer()
     .get('/update', async (req, res) => {
@@ -53,6 +58,10 @@ async function main () {
     .get('/db', async (req, res) => {
       const { getWorldById } = res.socket.db
       res.json(jsonify(await getWorldById(getRandom())))
+    })
+    .get('/fortunes', async (req, res) => {
+      const { getAllFortunes } = res.socket.db
+      res.html(fortunes.call([extra, ...(await getAllFortunes())].sort(sortByMessage)))
     })
     .get('/query', async (req, res) => {
       const { getWorldById } = res.socket.db
@@ -70,7 +79,9 @@ async function main () {
     .get('/json', (req, res) => res.json(sJSON(json)))
     .get('/plaintext', (req, res) => res.text(message))
     .listen(port, address)
+
   server.name = 'j'
+  server.stackTraces = config.stackTraces
 }
 
 main().catch(err => just.error(err.stack))

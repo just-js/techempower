@@ -1,6 +1,6 @@
 const postgres = require('pg.js')
 
-const { BinaryInt } = postgres.constants
+const { BinaryInt, VarChar } = postgres.constants
 
 const db = {
   hostname: 'tfb-database',
@@ -27,14 +27,26 @@ const queries = {
     name: 's1',
     portal: '',
     sql: 'select id, randomNumber from World where id = $1',
-    fields: [BinaryInt],
+    fields: [BinaryInt, BinaryInt],
+    fieldNames: ['id', 'randomnumber'],
     formats: [BinaryInt],
     params: [1],
+    maxRows: 100
+  },
+  fortunes: {
+    name: 's2',
+    portal: '',
+    sql: 'select * from Fortune',
+    fields: [BinaryInt, VarChar],
+    fieldNames: ['id', 'message'],
+    formats: [],
+    params: [],
     maxRows: 100
   }
 }
 
 const maxRandom = 10000
-const maxQuery = 20
+const maxQuery = 1024
+const stackTraces = true
 
-module.exports = { db, server, maxRandom, maxQuery, templates, queries }
+module.exports = { db, server, maxRandom, maxQuery, templates, queries, stackTraces }

@@ -1,9 +1,12 @@
 const { ANSI } = require('@binary')
 const { AD, AG, AR, AB, AM, AC, AY } = ANSI
+const postgres = require('pg.js')
+
+const { messageNames } = postgres.constants
 
 const ar = {}
 
-for (let i = 1; i <= 100; i++) {
+for (let i = 1; i <= 10000; i++) {
   ar[i] = (new Array(i)).fill(1)
 }
 
@@ -66,4 +69,31 @@ const stringify = (o, sp = '  ') => {
     .replace(/"<repeat>"/g, `${AC}<repeat>${AD}`)
 }
 
-module.exports = { getMethods, stringify, parse, spray }
+function monitor (pool) {
+  return just.setInterval(() => {
+    const stat = { call: { send: 0, recv: 0 }, data: { send: 0, recv: 0 } }
+    const parsers = []
+    for (const sock of pool) {
+      const { call, data } = sock.stats()
+      stat.call.send += call.send
+      stat.call.recv += call.recv
+      stat.data.send += data.send
+      stat.data.recv += data.recv
+      const stats = sock.parser.stats()
+      const o = {}
+      Object.keys(stats).forEach(k => {
+        o[messageNames[k]] = stats[k]
+      })
+      //o.parameters = sock.parser.parameters
+      o.status = sock.parser.status
+      o.state = sock.parser.state
+      parsers.push(o)
+    }
+    const cpu = just.cpuUsage()
+    const mem = just.memoryUsage()
+    just.print(`\u001b[2J\u001b[0;0H${stringify({ stat, mem, cpu })}`)
+    just.print(`${stringify({ parsers })}`)
+  }, 1000)
+}
+
+module.exports = { getMethods, stringify, parse, spray, monitor }

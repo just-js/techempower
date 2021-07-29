@@ -1,0 +1,65 @@
+boot a kvm micromachine
+GET /url?boot={encoded script}
+browser will open page, capture the payload, make a request to api to boot the vm and initialise it with the script
+browser will open a terminal 
+
+huge swap file
+most machines will be idle/frozen. when frozen, they can be paged out of memory and onto disk
+when unfreezing, we can page them back in again and unfreeze them
+can snapshot the state of the machine when it is frozen
+
+user firecracker
+
+browser can be used as proxy for action to open websockets and do things
+multiple terminal sessions with duplicated file descriptors
+
+snapshot after runing bootstrap script
+if id already exists, retrieve the snapshot
+
+use grid to store the images and snapshots
+
+you could service 10s of thousands of users off small machines as long as they are not busy
+grid can be the global memory
+migrating machines is really easy
+
+// ephemeral.io
+
+
+equinix metal + equinix global network can get you a machine at the edge pretty much everywhere
+
+64MB ram
+128MB disk
+
+
+
+benchmark service
+
+integrate with gitpod
+
+look at previous notes
+
+emulate postgres wire protocol
+script for database
+script for client
+spin up virtual db
+spin up client
+verify all the interactions according to the script
+
+simulate db scenarios
+simulate db failures
+simulate broken connections
+
+
+so i could say: at exactly this point of this message at this point in the script, drop the connection
+
+
+you could stream the disk over a websocket from the browser to the server
+so the disk exists in memory and in browser storage
+the compute runs in the cloud
+all the cloud server needs is lots of ram and cpus
+
+indexeddb as the filssytem
+
+syscalls on fs get sent by websocket to browser, run on indexed db fs and 
+results go back
+
