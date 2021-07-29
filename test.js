@@ -13,8 +13,8 @@ async function main () {
     sock.getWorldById = (...args) => batch.run(args)
   }
   const pool = await createPool(db, 1, onConnect)
-  const world = await pool[0].getWorldById(getRandom())
-  just.print(JSON.stringify(world))
+  //const world = await pool[0].getWorldById(getRandom())
+  //just.print(JSON.stringify(world))
   const worlds = await pool[0].getWorldById(...spray(10, getRandom))
   just.print(JSON.stringify(worlds))
 }

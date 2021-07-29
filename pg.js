@@ -1,4 +1,4 @@
-const { createClient } = require('@tcp')
+const { createClient } = require('../libs/tcp/tcp.js')
 const { lookup } = require('@dns')
 const md5 = require('@md5')
 
@@ -208,25 +208,7 @@ class Messaging {
     }
     offsets.len = off - offsets.start
     view.setUint32(offsets.start + 1, offsets.len - 1)
-    return {
-      off,
-      offsets,
-      paramStart,
-      set: (...args) => {
-        let off = paramStart
-        for (let i = 0; i < params.length; i++) {
-          if ((formats[i] || formats[0]).format === 1) {
-            view.setUint32(off + 4, args[i])
-            off += 4
-          } else {
-            const paramString = args[i].toString()
-            view.setUint32(paramStart, paramString.length)
-            off += 4
-            off += buffer.writeString(paramString, off)
-          }
-        }
-      }
-    }
+    return { off, offsets, paramStart }
   }
 }
 
@@ -238,8 +220,6 @@ class Batch {
     this.bindings = []
     this.exec = null
     this.prepare = null
-    this.args = []
-    this.first = 0
   }
 
   setup () {
@@ -266,13 +246,32 @@ class Batch {
     return this
   }
 
-  set (args, first) {
-    const { bindings } = this
-    this.first = first
-    this.args = args
-    args.forEach((args, i) => bindings[i + first].set(args))
+  set (batchArgs, first) {
+    const { bindings, query, exec } = this
+    const { params, formats } = query
+    const { view, buffer } = exec
+    const paramLen = params.length
+    let next = 0
+    for (let args of batchArgs) {
+      const { paramStart } = bindings[next + first]
+      let off = paramStart
+      if (args.constructor.name !== 'Array') args = [args]
+      for (let i = 0; i < paramLen; i++) {
+        if ((formats[i] || formats[0]).format === 1) {
+          view.setUint32(off + 4, args[i])
+          off += 4
+        } else {
+          const paramString = args[i].toString()
+          view.setUint32(paramStart, paramString.length)
+          off += 4
+          off += buffer.writeString(paramString, off)
+        }
+      }
+      next++
+    }
   }
 
+  // prepare the sql statement on the server
   compile () {
     const { sock, prepare } = this
     sock.callbacks.push(voidFn)
@@ -282,42 +281,70 @@ class Batch {
     return this
   }
 
-  async run (args) {
+  // read the current rows from the buffers
+  read () {
+    const { sock } = this
+    const { state, dv } = sock.parser
+    const { start, rows } = state
+    if (rows === 1) {
+      const id = dv.getInt32(start + 11)
+      const randomnumber = dv.getInt32(start + 19)
+      return { id, randomnumber }
+    }
+    just.error('multiple rows')
+    const result = []
+    let off = start + 11
+    for (let i = 0; i < rows; i++) {
+      const id = dv.getInt32(off)
+      const randomnumber = dv.getInt32(off + 8)
+      result.push({ id, randomnumber })
+      off += 8
+    }
+    return result
+  }
+
+  // async wait for results of all queries, read them and resolve the promise
+  // with aggregated results
+  wait (batchArgs) {
+    const batch = this
+    const { callbacks } = batch.sock
+    const todo = batchArgs.length
+    const results = []
+    let done = 0
+    return new Promise((resolve, reject) => {
+      batchArgs.forEach(args => callbacks.push(err => {
+        if (err) return reject(err)
+        // read the results from this query
+        if (todo === 1) {
+          resolve(batch.read())
+          return
+        }
+        results.push(batch.read())
+        if (++done === todo) resolve(results)
+      }))
+    })
+  }
+
+  // the 1 or more of the batch queries, passing in an array of arguments
+  // for each query we are running. args = [[a,b],[a,c],[b.c]] or [a,b,c]
+  run (args) {
+    const batch = this
     const { sock, size, bindings, exec } = this
     const { buffer, off } = exec
     const n = args.length
     const first = size - n
-    const { callbacks } = sock
-    const results = []
-    let done = 0
-    return new Promise((resolve, reject) => {
-      for (const arg of args) {
-        bindings[done + first].set(arg)
-        callbacks.push(err => {
-          done++
-          if (err) {
-            reject(err)
-            return
-          }
-          const { state, dv } = sock.parser
-          const { start, rows } = state
-          if (rows === 1) {
-            const id = dv.getInt32(start + 11)
-            const randomnumber = dv.getInt32(start + 19)
-            results.push({ id, randomnumber })
-          } else {
-            just.error('multiple rows')
-          }
-          if (done === n) resolve(n === 1 ? results[0] : results)
-        })
-      }
-      if (n < size) {
-        const start = bindings[first].offsets.start
-        sock.write(buffer, exec.off - start, start)
-      } else {
-        sock.write(buffer, off, 0)
-      }
-    })
+    // write the arguments into the query buffers
+    batch.set(args, first)
+    // create a promise which will resolve with results of all queries
+    const promise = batch.wait(args)
+    // write the queries onto the wire
+    if (n < size) {
+      const start = bindings[first].offsets.start
+      sock.write(buffer, exec.off - start, start)
+    } else {
+      sock.write(buffer, off, 0)
+    }
+    return promise
   }
 }
 

@@ -18,6 +18,9 @@ const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
 const getCount = qs => Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1
 const jsonify = sjs({ id: attr('number'), randomnumber: attr('number') })
+const sJSON = sjs({ message: attr('string') })
+const message = 'Hello, World!'
+const json = { message }
 
 async function main () {
   async function onConnect (sock) {
@@ -25,7 +28,28 @@ async function main () {
     sock.getWorldById = (...args) => batch.run(args)
   }
   const pool = await createPool(db, poolSize, onConnect)
+  just.setInterval(() => {
+    const stat = { call: { send: 0, recv: 0 }, data: { send: 0, recv: 0 } }
+    for (const sock of pool) {
+      const { call, data } = sock.stats()
+      stat.call.send += call.send
+      stat.call.recv += call.recv
+      stat.data.send += data.send
+      stat.data.recv += data.recv
+    }
+    const cpu = just.cpuUsage()
+    const mem = just.memoryUsage()
+    just.print(require('util.js').stringify({ stat, mem, cpu }))
+  }, 1000)
+
   const server = createServer()
+    .get('/update', async (req, res) => {
+      const { getWorldById } = res.socket.db
+      const count = getCount(req.query)
+      const args = spray(count, getRandom)
+      const records = await getWorldById(...args)
+      just.print(JSON.stringify(records))
+    }, { qs: true })
     .get('/db', async (req, res) => {
       const { getWorldById } = res.socket.db
       res.json(jsonify(await getWorldById(getRandom())))
@@ -37,12 +61,14 @@ async function main () {
         res.json(jsonify(await getWorldById(getRandom())))
         return
       }
-      const args = spray(getCount(req.query), getRandom)
+      const args = spray(count, getRandom)
       res.json(`[${(await getWorldById(...args)).map(jsonify).join(',')}]`)
     }, { qs: true })
     .connect(sock => {
       sock.db = pool[sock.fd % poolSize]
     })
+    .get('/json', (req, res) => res.json(sJSON(json)))
+    .get('/plaintext', (req, res) => res.text(message))
     .listen(port, address)
   server.name = 'j'
 }
