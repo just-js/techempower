@@ -589,8 +589,9 @@ function createParser (buf) {
   return parser
 }
 
-function generateSource (name, fields) {
+function generateSource (name, fields, params, formats) {
   const source = []
+
   source.push('  const { sock } = this')
   source.push('  const { state, dv, buf } = sock.parser')
   source.push('  const { start, rows } = state')
@@ -629,7 +630,41 @@ function generateSource (name, fields) {
   source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
   source.push('  }')
   source.push('  return result')
-  return source.join('\n')
+  const read = source.join('\n')
+
+  source.length = 0
+  if (params.length) {
+    source.push('const { bindings, query, exec } = this')
+    source.push('const { formats } = query')
+    source.push('const { view, buffer } = exec')
+    source.push('let next = 0')
+    source.push('for (let args of batchArgs) {')
+    source.push('  const { paramStart } = bindings[next + first]')
+    source.push('  let off = paramStart')
+    for (let i = 0; i < params.length; i++) {
+      if ((formats[i] || formats[0]).format === constants.formats.Binary) {
+        if (params.length === 1) {
+          source.push('  view.setUint32(off + 4, args)')
+        } else {
+          source.push(`  view.setUint32(off + 4, args[${i}])`)
+        }
+        source.push('  off += 4')
+      } else {
+        if (params.length === 1) {
+          source.push('  const paramString = args.toString()')
+        } else {
+          source.push(`  const paramString = args[${i}].toString()`)
+        }
+        source.push('  view.setUint32(paramStart, paramString.length)')
+        source.push('  off += 4')
+        source.push('  off += buffer.writeString(paramString, off)')
+      }
+    }
+    source.push('  next++')
+    source.push('}')
+  }
+  const write = source.join('\n')
+  return { read, write }
 }
 
 function startupMessage (db) {

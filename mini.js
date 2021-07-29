@@ -23,12 +23,18 @@ async function setup (sock) {
   const { worlds, fortunes } = queries
   const fortunesBatch = await createBatch(sock, fortunes, maxQuery).compile()
   sock.getAllFortunes = () => fortunesBatch.run()
-  let src = postgres.generateSource('getAllFortunes', sock.parser.fields)
-  fortunesBatch.read = just.vm.compile(src, 'fortunesBatch.js', [], [])
+  {
+    const { read, write } = postgres.generateSource('getAllFortunes', sock.parser.fields, fortunes.params, fortunes.formats)
+    fortunesBatch.read = just.vm.compile(read, 'fr.js', [], [])
+    fortunesBatch.write = just.vm.compile(write, 'fw.js', ['batchArgs', 'first'], [])
+  }
   const worldsBatch = await createBatch(sock, worlds, maxQuery).compile()
   sock.getWorldById = (...args) => worldsBatch.run(args)
-  src = postgres.generateSource('getWorlds', sock.parser.fields)
-  worldsBatch.read = just.vm.compile(src, 'worldsBatch.js', [], [])
+  {
+    const { read, write } = postgres.generateSource('getWorlds', sock.parser.fields, worlds.params, worlds.formats)
+    worldsBatch.read = just.vm.compile(read, 'wr.js', [], [])
+    worldsBatch.write = just.vm.compile(write, 'ww.js', ['batchArgs', 'first'], [])
+  }
 }
 
 const getRandom = () => Math.ceil(Math.random() * maxRandom)

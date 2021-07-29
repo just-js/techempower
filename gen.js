@@ -7,9 +7,13 @@ function compile (query) {
   for (let i = 0; i < query.fields.length; i++) {
     fields.push({ name: query.fieldNames[i], oid: query.fields[i].oid })
   }
-  const src = generateSource(query.name, fields)
+  const { read, write } = generateSource(query.name, fields, query.params, query.formats)
   //const fn = just.vm.compile(src, `${query.name}.js`, [], [])
-  return `module.exports.${query.name} = function ${query.name} () {\n${src}\n}`
+  return `module.exports.${query.name} = {
+  read: function () {\n${read}\n},
+  write: function () {\n${write}\n}
+  }
+`
 }
 
 const modules = []

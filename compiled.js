@@ -1,4 +1,5 @@
-module.exports.s1 = function s1 () {
+module.exports.s1 = {
+  read: function () {
   const { sock } = this
   const { state, dv, buf } = sock.parser
   const { start, rows } = state
@@ -20,8 +21,24 @@ module.exports.s1 = function s1 () {
     result.push({ id, randomnumber })
   }
   return result
+},
+  write: function () {
+const { bindings, query, exec } = this
+const { formats } = query
+const { view, buffer } = exec
+let next = 0
+for (let args of batchArgs) {
+  const { paramStart } = bindings[next + first]
+  let off = paramStart
+  view.setUint32(off + 4, args)
+  off += 4
+  next++
 }
-module.exports.s2 = function s2 () {
+}
+  }
+
+module.exports.s2 = {
+  read: function () {
   const { sock } = this
   const { state, dv, buf } = sock.parser
   const { start, rows } = state
@@ -48,4 +65,8 @@ module.exports.s2 = function s2 () {
     result.push({ id, message })
   }
   return result
+},
+  write: function () {
+
 }
+  }
