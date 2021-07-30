@@ -6,7 +6,7 @@ const html = require('@html')
 
 const config = require('techempower.config.js')
 
-const { createPool, createBatch } = postgres
+const { createPool, createBatch, generateBulkUpdate } = postgres
 const { createServer } = justify
 const { sjs, attr } = stringify
 const { maxRandom, maxQuery, server, queries, db, templates } = config
@@ -32,10 +32,25 @@ async function setup (sock) {
 
   await fortunesBatch.create()
   await worldsBatch.create()
+
+  const promises = []
+  for (let i = 0; i < maxQuery * 2; i++) {
+    const update = Object.assign(Object.assign({}, queries.update), generateBulkUpdate('world', 'randomnumber', 'id', i + 1))
+    update.name = `${update.name}.${i + 1}`
+    const updatesBatch = createBatch(sock, update, maxQuery)
+    updatesBatch.compile(updatesBatch.generate())
+    sock.updateBulk = (args) => {
+      const update = updates[args.length]
+      return update.run([args])
+    }
+    promises.push(updatesBatch.create())
+  }
+  const updates = await Promise.all(promises)
+  updates.unshift({ run: () => Promise.resolve([]) })
 }
 
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
-const getCount = qs => Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1
+const getCount = qs => Math.min(parseInt(((qs || {}).q) || 1, 10), maxQuery) || 1
 
 const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
 const extra = { id: 0, message: 'Additional fortune added at request time.' }
@@ -52,11 +67,18 @@ async function main () {
 
   const server = createServer()
     .get('/update', async (req, res) => {
-      const { getWorldById } = res.socket.db
+      const { getWorldById, updateBulk } = res.socket.db
       const count = getCount(req.query)
+      if (count === 1) {
+        const world = await getWorldById(getRandom())
+        await updateBulk(([world].flatMap(r => [r.id, r.randomnumber])))
+        res.json(jsonify([world]))
+        return
+      }
       const args = spray(count, getRandom)
       const records = await getWorldById(...args)
-      just.print(JSON.stringify(records))
+      await updateBulk(records.flatMap(r => [r.id, r.randomnumber]))
+      res.json(`[${records.map(jsonify).join(',')}]`)
     }, { qs: true })
     .get('/db', async (req, res) => {
       const { getWorldById } = res.socket.db

@@ -1,4 +1,6 @@
 const postgres = require('pg.js')
+
+/*
 const { generateSource } = postgres
 const config = require('techempower.config.js')
 
@@ -22,3 +24,5 @@ for (const name of Object.keys(config.queries)) {
 }
 
 just.fs.writeFile('compiled.js', ArrayBuffer.fromString(modules.join('\n')))
+*/
+just.print(postgres.generateBulkUpdate('world', 'randomnumber', 'id', 20).sql)

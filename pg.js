@@ -224,7 +224,17 @@ class Batch {
 
   setup () {
     const { size, query, bindings } = this
-    const m = new Messaging(new ArrayBuffer(128 * size), query)
+    // todo: we should be able to calculate the exact required size
+    const flushLen = 5
+    const prepareLen = 9 + query.sql.length + query.name.length + (query.formats.length * 4)
+    const describeLen = 7 + query.name.length
+    const bindLen = 1 + 4 + query.portal.length + 1 + query.name.length + 1 + (query.formats.length * 2) + 2 + (query.params.length * 8) + 2 + (query.fields.length * 2) + 2
+    // todo: we need to know size of variable length params
+    const execLen = 6 + query.portal.length + 4
+    const syncLen = 5
+    const bindExecLen = flushLen + syncLen + (size * (bindLen + execLen))
+    const prepareDescribeLen = prepareLen + describeLen + flushLen
+    const m = new Messaging(new ArrayBuffer(bindExecLen), query)
     for (let i = 0; i < size; i++) {
       const bind = m.createBindMessage()
       bindings.push(bind)
@@ -236,7 +246,7 @@ class Batch {
     m.off = sync.off
     let flush = m.createFlushMessage()
     m.off = flush.off
-    const p = new Messaging(new ArrayBuffer(256), query)
+    const p = new Messaging(new ArrayBuffer(prepareDescribeLen), query)
     const prepare = p.createPrepareMessage()
     p.off = prepare.off
     const describe = p.createDescribeMessage()
@@ -272,7 +282,7 @@ class Batch {
     const { params, formats } = query
     const fields = []
     for (let i = 0; i < query.fields.length; i++) {
-      fields.push({ name: query.fieldNames[i], oid: query.fields[i].oid })
+      fields.push({ format: query.fields[i].format, name: query.fieldNames[i], oid: query.fields[i].oid })
     }
 
     const source = []
@@ -280,36 +290,53 @@ class Batch {
     source.push('  const { sock } = this')
     source.push('  const { state, dv, buf } = sock.parser')
     source.push('  const { start, rows } = state')
-    source.push('  let off = start + 11')
+    source.push('  let off = start + 7')
     source.push('  if (rows === 1) {')
     for (const field of fields) {
-      const { name, oid } = field
+      const { name, oid, format } = field
       if (oid === INT4OID) {
-        source.push(`    const ${name} = dv.getInt32(off)`)
-        source.push('    off += 4')
+        if (format === constants.formats.Binary) {
+          source.push(`    const ${name} = dv.getInt32(off + 4)`)
+        } else {
+          source.push('    const len = dv.getUint32(off + 8)')
+          source.push(`    const ${name} = parseInt(buf.readString(len, off + 12), 10)`)
+        }
       } else if (oid === VARCHAROID) {
-        source.push('    const len = dv.getUint32(off)')
-        source.push('    off += 4')
-        source.push(`    const ${name} = buf.readString(len, off)`)
-        source.push('    off += len')
+        if (format === constants.formats.Binary) {
+          source.push('    const len = dv.getUint32(off)')
+          source.push(`    const ${name} = buf.slice(off + 4, off + 4 + len)`)
+        } else {
+          source.push('    const len = dv.getUint32(off)')
+          source.push(`    const ${name} = buf.readString(len, off + 4)`)
+        }
       }
     }
     source.push(`    return { ${fields.map(f => f.name).join(', ')} }`)
     source.push('  }')
     source.push('  const result = []')
-    source.push('  off = start + 11')
+    source.push('  off = start + 7')
     source.push('  for (let i = 0; i < rows; i++) {')
     for (const field of fields) {
-      const { name, oid } = field
+      const { name, oid, format } = field
       if (oid === INT4OID) {
-        source.push(`    const ${name} = dv.getInt32(off)`)
-        source.push('    off += 4')
+        if (format === constants.formats.Binary) {
+          source.push(`    const ${name} = dv.getInt32(off + 4)`)
+          source.push('    off += 4')
+        } else {
+          source.push('    const len = dv.getInt32(off)')
+          source.push('    off += 4')
+          source.push(`    const ${name} = parseInt(buf.readString(len, off), 10)`)
+          source.push('    off += len')
+        }
       } else if (oid === VARCHAROID) {
         source.push('    const len = dv.getUint32(off)')
         source.push('    off += 4')
-        source.push(`    const ${name} = buf.readString(len, off)`)
+        if (format === constants.formats.Binary) {
+          source.push(`    const ${name} = buf.slice(len, off)`)
+        } else {
+          source.push(`    const ${name} = buf.readString(len, off)`)
+        }
         source.push('    off += len')
-        source.push('    off += 11')
       }
     }
     source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
@@ -327,22 +354,45 @@ class Batch {
       source.push('  const { paramStart } = bindings[next + first]')
       source.push('  let off = paramStart')
       for (let i = 0; i < params.length; i++) {
-        if ((formats[i] || formats[0]).format === constants.formats.Binary) {
-          if (params.length === 1) {
-            source.push('  view.setUint32(off + 4, args)')
+        // should be checking the oid?
+        if ((formats[i] || formats[0]).oid === INT4OID) {
+          if ((formats[i] || formats[0]).format === constants.formats.Binary) {
+            if (params.length === 1) {
+              source.push('  view.setUint32(off + 4, args)')
+            } else {
+              source.push(`  view.setUint32(off + 4, args[${i}])`)
+            }
+            source.push('  off += 8')
           } else {
-            source.push(`  view.setUint32(off + 4, args[${i}])`)
+            if (params.length === 1) {
+              source.push('  const val = args.toString()')
+            } else {
+              source.push(`  const val = args[${i}]).toString()`)
+            }
+            source.push('  view.setUint32(off, val.length)')
+            source.push('  off += 4')
+            source.push('  off += buffer.writeString(val, off)')
           }
-          source.push('  off += 4')
         } else {
-          if (params.length === 1) {
-            source.push('  const paramString = args.toString()')
+          if ((formats[i] || formats[0]).format === constants.formats.Binary) {
+            if (params.length === 1) {
+              source.push('  const paramString = args.toString()')
+            } else {
+              source.push(`  const paramString = args[${i}].toString()`)
+            }
+            source.push('  view.setUint32(paramStart, paramString.length)')
+            source.push('  off += 4')
+            source.push('  off += buffer.writeString(paramString, off)')
           } else {
-            source.push(`  const paramString = args[${i}].toString()`)
+            if (params.length === 1) {
+              source.push('  const buf = args')
+            } else {
+              source.push(`  const buf = args[${i}]`)
+            }
+            source.push('  view.setUint32(paramStart, buf.byteLength)')
+            source.push('  off += 4')
+            source.push('  off += buffer.copyFrom(buf, off, buf.byteLength, 0)')
           }
-          source.push('  view.setUint32(paramStart, paramString.length)')
-          source.push('  off += 4')
-          source.push('  off += buffer.writeString(paramString, off)')
         }
       }
       source.push('  next++')
@@ -606,7 +656,6 @@ function createParser (buf) {
 
   function onDefault (len, off) {
     off += len - 4
-    just.print('poopoo')
     parser.onMessage()
     return off
   }
@@ -805,6 +854,35 @@ async function createConnection (config) {
   return sock
 }
 
+// Utilities
+function getIds (count) {
+  const updates = []
+  for (let i = 1; i < (count * 2); i += 2) {
+    updates.push(`$${i}`)
+  }
+  return updates.join(',')
+}
+
+function getClauses (count) {
+  const clauses = []
+  for (let i = 1; i < (count * 2); i += 2) {
+    clauses.push(`when $${i} then $${i + 1}`)
+  }
+  return clauses.join('\n')
+}
+
+// todo - handle strings
+function generateBulkUpdate (table, field, id, updates = 5) {
+  const formats = [constants.BinaryInt]
+  const params = Array(updates * 2).fill(0)
+  const sql = []
+  sql.push(`update ${table} set ${field} = CASE ${id}`)
+  sql.push(getClauses(updates))
+  sql.push(`else ${field}`)
+  sql.push(`end where ${id} in (${getIds(updates)})`)
+  return { formats, params, sql: sql.join('\n') }
+}
+
 // External
 function createPool (config, poolSize) {
   const connections = []
@@ -818,4 +896,4 @@ function createBatch (sock, query, size) {
   return (new Batch(sock, query, size)).setup()
 }
 
-module.exports = { constants, createPool, createBatch }
+module.exports = { constants, createPool, createBatch, generateBulkUpdate }

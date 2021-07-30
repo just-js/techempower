@@ -43,11 +43,14 @@ function replacer (k, v) {
     if (!v) {
       if (typeof v !== 'boolean' && typeof v !== 'number') return '<empty>'
     }
+    if (v.constructor && v.constructor.name === 'Array') {
+      return 'Array [' + v.length + ']: [' + v.slice(0, 3) + ']'
+    }
     if (v.constructor && v.constructor.name === 'ArrayBuffer') {
-      return `ArrayBuffer [${v.byteLength}]`
+      return 'ArrayBuffer ' + v.byteLength
     }
     if (v.constructor && v.constructor.name === 'Uint8Array') {
-      return `Uint8Array [${v.length}]`
+      return 'Uint8Array ' + v.length
     }
   } catch (err) {
     just.error(`${AR}error in stringify replacer${AD}\n${err.stack}`)

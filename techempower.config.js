@@ -23,6 +23,16 @@ const templates = {
 }
 
 const queries = {
+  update: {
+    name: 'u1',
+    portal: '',
+    sql: '',
+    fields: [],
+    fieldNames: [],
+    formats: [],
+    params: [],
+    maxRows: 100
+  },
   worlds: {
     name: 's1',
     portal: '',
@@ -46,7 +56,7 @@ const queries = {
 }
 
 const maxRandom = 10000
-const maxQuery = 1024
+const maxQuery = 20
 const stackTraces = true
 
 module.exports = { db, server, maxRandom, maxQuery, templates, queries, stackTraces }
