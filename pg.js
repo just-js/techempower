@@ -297,18 +297,22 @@ class Batch {
       if (oid === INT4OID) {
         if (format === constants.formats.Binary) {
           source.push(`    const ${name} = dv.getInt32(off + 4)`)
+          source.push('    off += 8')
         } else {
-          source.push('    const len = dv.getUint32(off + 8)')
-          source.push(`    const ${name} = parseInt(buf.readString(len, off + 12), 10)`)
+          source.push('    const len = dv.getUint32(off)')
+          source.push('    off += 4')
+          source.push(`    const ${name} = parseInt(buf.readString(len, off), 10)`)
+          source.push('    off += len')
         }
       } else if (oid === VARCHAROID) {
+        source.push('    const len = dv.getUint32(off)')
+        source.push('    off += 4')
         if (format === constants.formats.Binary) {
-          source.push('    const len = dv.getUint32(off)')
-          source.push(`    const ${name} = buf.slice(off + 4, off + 4 + len)`)
+          source.push(`    const ${name} = buf.slice(off, off + len)`)
         } else {
-          source.push('    const len = dv.getUint32(off)')
-          source.push(`    const ${name} = buf.readString(len, off + 4)`)
+          source.push(`    const ${name} = buf.readString(len, off)`)
         }
+        source.push('    off += len')
       }
     }
     source.push(`    return { ${fields.map(f => f.name).join(', ')} }`)
@@ -321,7 +325,7 @@ class Batch {
       if (oid === INT4OID) {
         if (format === constants.formats.Binary) {
           source.push(`    const ${name} = dv.getInt32(off + 4)`)
-          source.push('    off += 4')
+          source.push('    off += 8')
         } else {
           source.push('    const len = dv.getInt32(off)')
           source.push('    off += 4')
