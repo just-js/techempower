@@ -14,7 +14,8 @@ const db = {
 
 const server = {
   address: '0.0.0.0',
-  port: 8080
+  port: 8080,
+  name: 'j'
 }
 
 const templates = {
@@ -56,7 +57,7 @@ const queries = {
 }
 
 const maxRandom = 10000
-const maxQuery = 500
+const maxQuery = 100
 const stackTraces = true
 
 module.exports = { db, server, maxRandom, maxQuery, templates, queries, stackTraces }

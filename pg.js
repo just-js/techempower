@@ -267,11 +267,13 @@ class Batch {
       sock.callbacks.push(() => resolve(batch))
       const r = sock.write(prepare.buffer, prepare.off, 0)
       if (r <= 0) reject(new just.SystemError('Could Not Prepare Queries'))
+      // todo: eagain
     })
   }
 
   compile ({ read, write }) {
     const { query } = this
+    this.source = { read, write }
     // todo. needs to be compiled in a separate context
     if (read.length) this.read = just.vm.compile(read, `${query.name}r.js`, [], [])
     if (write.length) this.write = just.vm.compile(write, `${query.name}w.js`, ['batchArgs', 'first'], [])
@@ -288,7 +290,7 @@ class Batch {
     const source = []
 
     source.push('  const { sock } = this')
-    source.push('  const { state, dv, buf } = sock.parser')
+    source.push('  const { state, dv, buf, u8 } = sock.parser')
     source.push('  const { start, rows } = state')
     source.push('  let off = start + 7')
     source.push('  if (rows === 1) {')
@@ -333,7 +335,7 @@ class Batch {
           source.push('    off += len')
         }
       } else if (oid === VARCHAROID) {
-        source.push('    const len = dv.getUint32(off)')
+        source.push('    const len = dv.getInt32(off)')
         source.push('    off += 4')
         if (format === constants.formats.Binary) {
           source.push(`    const ${name} = buf.slice(len, off)`)
@@ -343,7 +345,12 @@ class Batch {
         source.push('    off += len')
       }
     }
+    source.push('    if (u8[off] === 84) {')
+    source.push('      const len = dv.getUint32(off + 1)')
+    source.push('      off += len')
+    source.push('    }')
     source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
+    source.push('    off += 7')
     source.push('  }')
     source.push('  return result')
     const read = source.join('\n')
