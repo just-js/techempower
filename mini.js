@@ -25,12 +25,12 @@ async function setup (sock) {
   await worldsBatch.create()
 
   const updates = []
-  for (let i = 1; i <= maxQuery * 2; i++) {
+  for (let i = 1; i <= maxQuery; i++) {
     const update = Object.assign(Object.assign({}, queries.update), generateBulkUpdate('world', 'randomnumber', 'id', i))
     update.name = `${update.name}.${i}`
     const updatesBatch = createBatch(sock, update, maxQuery)
     updatesBatch.compile(updatesBatch.generate())
-    sock.updateBulk = (args) => updates[args.length].run([args])
+    sock.updateBulk = (args) => updates[Math.ceil(args.length / 2)].run([args])
     updates.push(await updatesBatch.create())
     just.print(`${ANSI.control.move(5, 0)}batches compiled ${ANSI.control.column(30)}${AY}${i}${AD}${ANSI.control.move(1, 30)}`)
   }
