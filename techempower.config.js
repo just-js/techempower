@@ -1,19 +1,17 @@
 const postgres = require('pg.js')
 
-const { BinaryInt, VarChar } = postgres.constants
+const { BinaryInt, VarChar, fieldTypes } = postgres.constants
+const { INT4OID, VARCHAROID } = fieldTypes
 
 const db = {
   hostname: 'tfb-database',
-  port: 5432,
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
-  database: 'hello_world',
-  bufferSize: 64 * 1024,
-  version: 0x00030000
+  database: 'hello_world'
 }
 
 const server = {
-  address: '0.0.0.0',
+  address: '127.0.0.1',
   port: 8080,
   name: 'j'
 }
@@ -25,39 +23,32 @@ const templates = {
 
 const queries = {
   update: {
-    name: 'u1',
-    portal: '',
-    sql: '',
-    fields: [],
-    fieldNames: [],
-    formats: [],
-    params: [],
-    maxRows: 100
+    name: 'u1'
   },
   worlds: {
     name: 's1',
-    portal: '',
     sql: 'select id, randomNumber from World where id = $1',
-    fields: [BinaryInt, BinaryInt],
-    fieldNames: ['id', 'randomnumber'],
-    formats: [BinaryInt],
-    params: [1],
-    maxRows: 100
+    fields: [
+      { format: BinaryInt, name: 'id', oid: INT4OID },
+      { format: BinaryInt, name: 'randomnumber', oid: INT4OID }
+    ],
+    params: 1,
+    formats: [BinaryInt]
   },
   fortunes: {
     name: 's2',
-    portal: '',
     sql: 'select * from Fortune',
-    fields: [BinaryInt, VarChar],
-    fieldNames: ['id', 'message'],
-    formats: [],
-    params: [],
-    maxRows: 100
+    fields: [
+      { format: BinaryInt, name: 'id', oid: INT4OID },
+      { format: VarChar, name: 'message', oid: VARCHAROID }
+    ]
   }
 }
 
 const maxRandom = 10000
-const maxQuery = 100
-const stackTraces = true
+const maxQuery = 50
+const stackTraces = false
 
-module.exports = { db, server, maxRandom, maxQuery, templates, queries, stackTraces }
+module.exports = {
+  db, server, maxRandom, maxQuery, templates, queries, stackTraces
+}

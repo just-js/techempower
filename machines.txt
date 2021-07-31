@@ -63,3 +63,30 @@ indexeddb as the filssytem
 syscalls on fs get sent by websocket to browser, run on indexed db fs and 
 results go back
 
+
+
+in memory file system
+
+
+- eliminate tcp.js - removes 2 lines from stack
+
+    at Object.actions.<computed> (/home/andrew/Documents/source/github/just-js/techempower/pg.js:859:19)
+    at Object.parser.onMessage (/home/andrew/Documents/source/github/just-js/techempower/pg.js:867:48)
+    at onErrorResponse (/home/andrew/Documents/source/github/just-js/techempower/pg.js:544:12)
+    at Object.parse (/home/andrew/Documents/source/github/just-js/techempower/pg.js:660:30)
+    at Object.sock.onData (/home/andrew/Documents/source/github/just-js/techempower/pg.js:877:33)
+    at handleRead (/home/andrew/Documents/source/github/just-js/libs/tcp/tcp.js:117:12)
+    at Object.onSocketEvent (/home/andrew/Documents/source/github/just-js/libs/tcp/tcp.js:157:7)
+    at Object.poll (lib/loop.js:23:20)
+    at Object.run (lib/loop.js:68:34)
+    at main (just.js:417:34)
+
+
+optimization
+bind a query for each id once then just exec it every time
+
+any query
+https://github.com/brianc/node-postgres/issues/1091
+
+
+make single query faster by not flushing every one

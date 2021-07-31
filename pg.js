@@ -3,7 +3,7 @@ const { lookup } = require('@dns')
 const md5 = require('@md5')
 
 // Constants
-const voidFn = () => {}
+const PG_VERSION = 0x00030000
 
 const constants = {
   AuthenticationMD5Password: 5,
@@ -57,7 +57,9 @@ const {
   ParseComplete,
   NoData,
   ReadyForQuery,
-  CloseComplete
+  CloseComplete,
+  BackendKeyData,
+  BindComplete
 } = constants.messageTypes
 
 // Utilities
@@ -194,10 +196,9 @@ class Messaging {
         view.setUint32(off, params[i])
         off += 4
       } else {
-        const paramString = params[i].toString()
-        view.setUint32(off, paramString.length)
+        view.setUint32(off, params[i].length)
         off += 4
-        off += buffer.writeString(paramString, off)
+        off += buffer.writeString(params[i], off)
       }
     }
     view.setUint16(off, fields.length)
@@ -212,7 +213,7 @@ class Messaging {
   }
 }
 
-class Batch {
+class Query {
   constructor (sock, query, size) {
     this.sock = sock
     this.query = query
@@ -224,6 +225,7 @@ class Batch {
 
   setup () {
     const { size, query, bindings } = this
+    bindings.length = 0
     // todo: we should be able to calculate the exact required size
     const flushLen = 5
     const prepareLen = 9 + query.sql.length + query.name.length + (query.formats.length * 4)
@@ -271,21 +273,18 @@ class Batch {
     })
   }
 
-  compile ({ read, write }) {
-    const { query } = this
-    this.source = { read, write }
+  compile () {
+    const { query, source } = this
+    const { read, write } = source
     // todo. needs to be compiled in a separate context
     if (read.length) this.read = just.vm.compile(read, `${query.name}r.js`, [], [])
     if (write.length) this.write = just.vm.compile(write, `${query.name}w.js`, ['batchArgs', 'first'], [])
+    return this
   }
 
   generate () {
     const { query } = this
-    const { params, formats } = query
-    const fields = []
-    for (let i = 0; i < query.fields.length; i++) {
-      fields.push({ format: query.fields[i].format, name: query.fieldNames[i], oid: query.fields[i].oid })
-    }
+    const { fields, params, formats } = query
 
     const source = []
 
@@ -293,6 +292,7 @@ class Batch {
     source.push('  const { state, dv, buf, u8 } = sock.parser')
     source.push('  const { start, rows } = state')
     source.push('  let off = start + 7')
+    source.push('  let len = 0')
     source.push('  if (rows === 1) {')
     for (const field of fields) {
       const { name, oid, format } = field
@@ -301,13 +301,13 @@ class Batch {
           source.push(`    const ${name} = dv.getInt32(off + 4)`)
           source.push('    off += 8')
         } else {
-          source.push('    const len = dv.getUint32(off)')
+          source.push('    len = dv.getUint32(off)')
           source.push('    off += 4')
           source.push(`    const ${name} = parseInt(buf.readString(len, off), 10)`)
           source.push('    off += len')
         }
       } else if (oid === VARCHAROID) {
-        source.push('    const len = dv.getUint32(off)')
+        source.push('    len = dv.getUint32(off)')
         source.push('    off += 4')
         if (format === constants.formats.Binary) {
           source.push(`    const ${name} = buf.slice(off, off + len)`)
@@ -329,13 +329,13 @@ class Batch {
           source.push(`    const ${name} = dv.getInt32(off + 4)`)
           source.push('    off += 8')
         } else {
-          source.push('    const len = dv.getInt32(off)')
+          source.push('    len = dv.getInt32(off)')
           source.push('    off += 4')
           source.push(`    const ${name} = parseInt(buf.readString(len, off), 10)`)
           source.push('    off += len')
         }
       } else if (oid === VARCHAROID) {
-        source.push('    const len = dv.getInt32(off)')
+        source.push('    len = dv.getInt32(off)')
         source.push('    off += 4')
         if (format === constants.formats.Binary) {
           source.push(`    const ${name} = buf.slice(len, off)`)
@@ -346,7 +346,7 @@ class Batch {
       }
     }
     source.push('    if (u8[off] === 84) {')
-    source.push('      const len = dv.getUint32(off + 1)')
+    source.push('      len = dv.getUint32(off + 1)')
     source.push('      off += len')
     source.push('    }')
     source.push(`    result.push({ ${fields.map(f => f.name).join(', ')} })`)
@@ -357,8 +357,7 @@ class Batch {
 
     source.length = 0
     if (params.length) {
-      source.push('const { bindings, query, exec } = this')
-      source.push('const { formats } = query')
+      source.push('const { bindings, exec } = this')
       source.push('const { view, buffer } = exec')
       source.push('let next = 0')
       source.push('for (let args of batchArgs) {')
@@ -410,37 +409,16 @@ class Batch {
       source.push('}')
     }
     const write = source.join('\n')
-    return { read, write }
+    this.source = { read, write }
+    return this
   }
 
   // todo - allow this to be compiled
-  write (batchArgs, first) {}
+  write (args, first) {}
 
   // read the current rows from the buffers - to be overridden
   read () {
     return []
-  }
-
-  // async wait for results of all queries, read them and resolve the promise
-  // with aggregated results
-  wait (batchArgs) {
-    const batch = this
-    const { callbacks } = batch.sock
-    const todo = batchArgs.length
-    const results = []
-    let done = 0
-    return new Promise((resolve, reject) => {
-      batchArgs.forEach(args => callbacks.push(err => {
-        if (err) return reject(err)
-        // read the results from this query
-        if (todo === 1) {
-          resolve(batch.read())
-          return
-        }
-        results.push(batch.read())
-        if (++done === todo) resolve(results)
-      }))
-    })
   }
 
   // the 1 or more of the batch queries, passing in an array of arguments
@@ -448,21 +426,38 @@ class Batch {
   run (args = [[]]) {
     const batch = this
     const { sock, size, bindings, exec } = this
+    const { callbacks } = sock
     const { buffer, off } = exec
     const n = args.length
     const first = size - n
     // write the arguments into the query buffers
     batch.write(args, first)
-    // create a promise which will resolve with results of all queries
-    const promise = batch.wait(args)
     // write the queries onto the wire
+    let r = 0
     if (n < size) {
       const start = bindings[first].offsets.start
-      sock.write(buffer, exec.off - start, start)
+      r = sock.write(buffer, exec.off - start, start)
     } else {
-      sock.write(buffer, off, 0)
+      r = sock.write(buffer, off, 0)
     }
-    return promise
+    if (r <= 0) return Promise.reject(new Error('Bad Write'))
+    const results = []
+    let done = 0
+    return new Promise((resolve, reject) => {
+      args.forEach(args => callbacks.push(err => {
+        if (err) {
+          reject(err)
+          return
+        }
+        // read the results from this query
+        if (n === 1) {
+          resolve(batch.read())
+          return
+        }
+        results.push(batch.read())
+        if (++done === n) resolve(results)
+      }))
+    })
   }
 }
 
@@ -718,8 +713,9 @@ function createParser (buf) {
   return parser
 }
 
+// todo: move these to Query class
 function startupMessage (db) {
-  const { user, database, version = 0x00030000, parameters = [] } = db
+  const { user, database, version, parameters = [] } = db
   let len = 8 + 4 + 1 + user.length + 1 + 8 + 1 + database.length + 2
   for (let i = 0; i < parameters.length; i++) {
     const { name, value } = parameters[i]
@@ -774,22 +770,29 @@ function md5AuthMessage ({ user, pass, salt }) {
 }
 
 // ACTIONS - Async/Promise Interface
+// todo - turn this into a PGSocket class that extends Socket from TCP
 function authenticate (sock, salt) {
   const { user, pass } = sock.config
   sock.write(md5AuthMessage({ user, pass, salt }))
-  return new Promise(resolve => {
-    sock.callbacks.push(resolve)
+  return new Promise((resolve, reject) => {
+    sock.callbacks.push(err => {
+      if (err) return reject(err)
+      resolve()
+    })
   })
 }
 
 function start (sock) {
   sock.write(startupMessage(sock.config))
-  return new Promise(resolve => {
-    sock.callbacks.push(resolve)
+  return new Promise((resolve, reject) => {
+    sock.callbacks.push(err => {
+      if (err) return reject(err)
+      resolve()
+    })
   })
 }
 
-function connect (config, buffer) {
+function connectSocket (config, buffer) {
   const { hostname, port } = config
   return new Promise((resolve, reject) => {
     lookup(hostname, (err, ip) => {
@@ -819,45 +822,57 @@ function connect (config, buffer) {
 }
 
 async function createConnection (config) {
-  const sock = await connect(config, new ArrayBuffer(config.bufferSize))
-  const defaultAction = (...args) => sock.callbacks.shift()(...args)
-  const actions = {
-    [CommandComplete]: defaultAction,
-    [CloseComplete]: defaultAction,
-    [AuthenticationOk]: defaultAction,
-    [ParseComplete]: defaultAction,
-    [NoData]: defaultAction,
-    [ReadyForQuery]: () => {
-      if (!sock.authenticated) {
-        sock.authenticated = true
-        defaultAction()
-      }
-    },
-    [ErrorResponse]: () => {
-      defaultAction(new Error(JSON.stringify(parser.errors, null, '  ')))
-    },
-    [RowDescription]: () => {
-      if (sock.callbacks[0].isExec) return
-      defaultAction()
-    }
-  }
-  sock.config = config
-  sock.callbacks = []
-  sock.authenticated = false
-  const parser = sock.parser = createParser(sock.buffer)
   // parser.onMessage = () => (actions[parser.type] || voidFn)()
+  /*
   const stats = {}
   for (const k of Object.keys(constants.messageTypes)) {
     stats[constants.messageTypes[k]] = 0
-  }
-  parser.onMessage = () => {
-    stats[parser.type]++
-    (actions[parser.type] || voidFn)()
   }
   parser.stats = () => {
     const o = Object.assign({}, stats)
     for (const k of Object.keys(stats)) stats[k] = 0
     return o
+  }
+  */
+  if (!config.bufferSize) config.bufferSize = 64 * 1024
+  if (!config.version) config.version = PG_VERSION
+  if (!config.port) config.port = 5432
+  const callbacks = []
+  const sock = await connectSocket(config, new ArrayBuffer(config.bufferSize))
+  sock.config = config
+  sock.callbacks = callbacks
+  sock.authenticated = false
+  const defaultAction = (...args) => callbacks.shift()(...args)
+  const defaults = [CommandComplete, CloseComplete, AuthenticationOk, ParseComplete, NoData]
+  const actions = {}
+  defaults.forEach(type => {
+    actions[type] = defaultAction
+  })
+  actions[BackendKeyData] = () => {}
+  actions[BindComplete] = () => {}
+  actions[ReadyForQuery] = () => {
+    if (sock.authenticated) return
+    sock.authenticated = true
+    defaultAction()
+  }
+  actions[ErrorResponse] = () => {
+    defaultAction(new Error(JSON.stringify(parser.errors, null, '  ')))
+  }
+  actions[RowDescription] = () => {
+    if (sock.callbacks[0].isExec) return
+    defaultAction()
+  }
+  const parser = createParser(sock.buffer)
+  sock.parser = parser
+  parser.onMessage = () => actions[parser.type]()
+  sock.createQuery = (config, size = 1) => {
+    const query = Object.assign({}, config)
+    if (!query.portal) query.portal = ''
+    query.params = Array(config.params || 0).fill(0)
+    if (!query.fields) query.fields = []
+    if (!query.formats) query.formats = []
+    if (!query.maxRows) query.maxRows = 100
+    return new Query(sock, query, size)
   }
   sock.onData = bytes => parser.parse(bytes)
   await start(sock)
@@ -865,37 +880,10 @@ async function createConnection (config) {
   return sock
 }
 
-// Utilities
-function getIds (count) {
-  const updates = []
-  for (let i = 1; i < (count * 2); i += 2) {
-    updates.push(`$${i}`)
+function connect (config, poolSize = 1) {
+  if (poolSize === 1) {
+    return createConnection(config)
   }
-  return updates.join(',')
-}
-
-function getClauses (count) {
-  const clauses = []
-  for (let i = 1; i < (count * 2); i += 2) {
-    clauses.push(`when $${i} then $${i + 1}`)
-  }
-  return clauses.join('\n')
-}
-
-// todo - handle strings
-function generateBulkUpdate (table, field, id, updates = 5) {
-  const formats = [constants.BinaryInt]
-  const params = Array(updates * 2).fill(0)
-  const sql = []
-  sql.push(`update ${table} set ${field} = CASE ${id}`)
-  sql.push(getClauses(updates))
-  sql.push(`else ${field}`)
-  sql.push(`end where ${id} in (${getIds(updates)})`)
-  return { formats, params, sql: sql.join('\n') }
-}
-
-// External
-function createPool (config, poolSize) {
   const connections = []
   for (let i = 0; i < poolSize; i++) {
     connections.push(createConnection(config))
@@ -903,8 +891,4 @@ function createPool (config, poolSize) {
   return Promise.all(connections)
 }
 
-function createBatch (sock, query, size) {
-  return (new Batch(sock, query, size)).setup()
-}
-
-module.exports = { constants, createPool, createBatch, generateBulkUpdate }
+module.exports = { constants, connect }

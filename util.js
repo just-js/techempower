@@ -68,6 +68,7 @@ function toMB (v) {
 function monitor (pool, server) {
   return just.setInterval(() => {
     const stat = { call: { send: 0, recv: 0 }, data: { send: 0, recv: 0 } }
+/*
     const parsers = []
     for (const sock of pool) {
       const { call, data } = sock.stats()
@@ -84,6 +85,7 @@ function monitor (pool, server) {
       o.state = sock.parser.state
       parsers.push(o)
     }
+*/
     const cpu = just.cpuUsage()
     const mem = just.memoryUsage()
     const { column } = ANSI.control
@@ -95,6 +97,7 @@ function monitor (pool, server) {
     just.print(`${AC}recv ${ANSI.control.column(72)}${AD}${stat.data.recv} `, false)
     just.print(`\n${AY}cpu ${column(6)}${AC}user ${AD}${cpu.user} ${column(16)}${AC}system ${AD}${cpu.system}`, false)
     just.print(` ${AY}mem ${column(30)}${AC}rss ${AD}${toMB(mem.rss)} ${column(44)}${AC}external ${AD}${toMB(mem.external_memory)} ${column(64)}${AC}used-v8-heap ${AD}${toMB(mem.used_heap_size)}`, false)
+/*
     const pgstats = {
       bind: 0,
       command: 0,
@@ -112,6 +115,7 @@ function monitor (pool, server) {
     just.print(` ${AM}command${AD}${column(32)}${pgstats.command}`, false)
     just.print(` ${AM}ready${AD}${column(50)}${pgstats.ready}`, false)
     just.print(` ${AM}status${AD}${column(68)}${pgstats.status}`, false)
+*/
     just.print(`\n${AY}http${AD}`, false)
     just.print(`${column(6)}${AM}rps${AD}${column(14)}${server.rps}`, false)
     server.rps = 0
@@ -143,4 +147,30 @@ const error = {
   }
 }
 
-module.exports = { stringify, spray, monitor, log, error }
+function getIds (count) {
+  const updates = []
+  for (let i = 1; i < (count * 2); i += 2) {
+    updates.push(`$${i}`)
+  }
+  return updates.join(',')
+}
+
+function getClauses (count) {
+  const clauses = []
+  for (let i = 1; i < (count * 2); i += 2) {
+    clauses.push(`when $${i} then $${i + 1}`)
+  }
+  return clauses.join('\n')
+}
+
+function generateBulkUpdate (table, field, id, updates = 5, type = postgres.constants.BinaryInt) {
+  const formats = [type]
+  const sql = []
+  sql.push(`update ${table} set ${field} = CASE ${id}`)
+  sql.push(getClauses(updates))
+  sql.push(`else ${field}`)
+  sql.push(`end where ${id} in (${getIds(updates)})`)
+  return { formats, name: `${table}.${updates}`, params: updates * 2, sql: sql.join('\n') }
+}
+
+module.exports = { stringify, spray, monitor, log, error, generateBulkUpdate }
