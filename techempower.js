@@ -10,11 +10,12 @@ const { connect } = postgres
 const { createServer } = justify
 const { maxRandom, maxQuery, httpd, queries, db, templates } = config
 const { port, address } = httpd
-const { spray, generateBulkUpdate, sortByMessage } = util
+const { generateBulkUpdate, sortByMessage, sprayer } = util
 
 // helper functions
+const spray = sprayer(maxQuery)
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
-const getCount = qs => Math.min(parseInt(((qs || {}).q) || 1, 10), maxQuery) || 1
+const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1)
 
 // async main. any exceptions will be caught in the handler below
 async function main () {
@@ -30,18 +31,20 @@ async function main () {
   // compile and prepare sql statements when we connect to each database
   await Promise.all(pool.map(async sock => {
     const { worlds, fortunes } = queries
-    const U = [{ run: () => Promise.resolve([]) }]
+    const updates = [{ run: () => Promise.resolve([]) }]
     const fortunesQuery = await sock.create(fortunes, maxQuery)
     const worldsQuery = await sock.create(worlds, maxQuery)
     for (let i = 1; i <= maxQuery; i++) {
       const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
       const bulk = Object.assign(queries.update, update)
-      U.push(await sock.create(bulk))
+      updates.push(await sock.create(bulk))
     }
     sock.getAllFortunes = () => fortunesQuery.run()
     sock.getWorldById = id => worldsQuery.run([id])
     sock.getWorldsById = ids => worldsQuery.run(ids)
-    sock.updateWorlds = w => U[w.length].run([w.flatMap(w => [w.id, w.randomnumber])])
+    sock.updateWorlds = worlds => {
+      updates[worlds.length].run([worlds.flatMap(w => [w.id, w.randomnumber])])
+    }
   }))
 
   // the connection pool is created and bootstrapped, set up the web server
@@ -71,7 +74,9 @@ async function main () {
     .connect(sock => (sock.db = pool[sock.fd % poolSize]))
 
   // listen on the given port and address
-  server.listen(port, address)
+  const ok = server.listen(port, address)
+  if (!ok) throw new just.SystemError(`Could Not Listen on ${address}:${port}`)
+  just.print(`listening on ${address}:${port}`)
 }
 
 main().catch(err => just.error(err.stack))

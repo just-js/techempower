@@ -1,21 +1,16 @@
 /**
  * Utility function to generate an array of N values populated with provided
  * map function. There seems to be no simpler/quicker way to do this in JS.
- */
-
-const ar = [0]
-
-for (let i = 1; i <= 100; i++) {
-  ar[i] = (new Array(i)).fill(1)
-}
-
-/**
- * Generate a new Array of N items which are populated by the provided map
- * function.
  * @param {string} n     - Size of the array to create
  * @param {string} field - The map function which will create each array value
  */
-const spray = (n, fn) => ar[n % 10000].map(fn)
+function sprayer (max = 100) {
+  const ar = [0]
+  for (let i = 0; i < max; i++) {
+    ar[i + 1] = (new Array(i + 1)).fill(1)
+  }
+  return (n, fn) => ar[n % (max + 1)].map(fn)
+}
 
 /**
  * Stringify replacement for pretty printing JS objects
@@ -111,4 +106,4 @@ function sortByMessage (a, b) {
   return 0
 }
 
-module.exports = { stringify, spray, generateBulkUpdate, sortByMessage }
+module.exports = { stringify, sprayer, generateBulkUpdate, sortByMessage }
