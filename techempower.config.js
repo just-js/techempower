@@ -1,16 +1,20 @@
-const postgres = require('pg.js')
+// postgres imports
+const postgres = require('@pg')
 
 const { BinaryInt, VarChar, fieldTypes } = postgres.constants
 const { INT4OID, VARCHAROID } = fieldTypes
 
+// database connection details
 const db = {
   hostname: 'tfb-database',
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
-  database: 'hello_world'
+  database: 'hello_world',
+  bufferSize: 256 * 1024
 }
 
-const server = {
+// web server configuration
+const httpd = {
   address: '127.0.0.1',
   port: 8080,
   name: 'j'
@@ -40,7 +44,7 @@ const queries = {
     sql: 'select * from Fortune',
     fields: [
       { format: BinaryInt, name: 'id', oid: INT4OID },
-      { format: VarChar, name: 'message', oid: VARCHAROID }
+      { format: VarChar, name: 'message', oid: VARCHAROID, htmlEscape: true }
     ]
   }
 }
@@ -50,5 +54,5 @@ const maxQuery = 50
 const stackTraces = false
 
 module.exports = {
-  db, server, maxRandom, maxQuery, templates, queries, stackTraces
+  db, httpd, maxRandom, maxQuery, templates, queries, stackTraces
 }
