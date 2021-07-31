@@ -1,4 +1,4 @@
-const { createClient } = require('../libs/tcp/tcp.js')
+const { createClient } = require('@tcp')
 const { lookup } = require('@dns')
 const md5 = require('@md5')
 
@@ -822,26 +822,21 @@ function connectSocket (config, buffer) {
 }
 
 async function createConnection (config) {
-  // parser.onMessage = () => (actions[parser.type] || voidFn)()
-  /*
-  const stats = {}
-  for (const k of Object.keys(constants.messageTypes)) {
-    stats[constants.messageTypes[k]] = 0
-  }
-  parser.stats = () => {
-    const o = Object.assign({}, stats)
-    for (const k of Object.keys(stats)) stats[k] = 0
-    return o
-  }
-  */
   if (!config.bufferSize) config.bufferSize = 64 * 1024
   if (!config.version) config.version = PG_VERSION
   if (!config.port) config.port = 5432
   const callbacks = []
+  const stats = {}
+
+  for (const k of Object.keys(constants.messageTypes)) {
+    stats[constants.messageTypes[k]] = 0
+  }
+
   const sock = await connectSocket(config, new ArrayBuffer(config.bufferSize))
   sock.config = config
   sock.callbacks = callbacks
   sock.authenticated = false
+
   const defaultAction = (...args) => callbacks.shift()(...args)
   const defaults = [CommandComplete, CloseComplete, AuthenticationOk, ParseComplete, NoData]
   const actions = {}
@@ -862,19 +857,31 @@ async function createConnection (config) {
     if (sock.callbacks[0].isExec) return
     defaultAction()
   }
+
   const parser = createParser(sock.buffer)
-  sock.parser = parser
-  parser.onMessage = () => actions[parser.type]()
-  sock.createQuery = (config, size = 1) => {
+  parser.onMessage = () => {
+    const { type } = parser
+    stats[type]++
+    return actions[type]()
+  }
+  parser.stats = () => {
+    const o = Object.assign({}, stats)
+    for (const k of Object.keys(stats)) stats[k] = 0
+    return o
+  }
+
+  sock.create = (config, size = 1) => {
     const query = Object.assign({}, config)
     if (!query.portal) query.portal = ''
     query.params = Array(config.params || 0).fill(0)
     if (!query.fields) query.fields = []
     if (!query.formats) query.formats = []
     if (!query.maxRows) query.maxRows = 100
-    return new Query(sock, query, size)
+    return (new Query(sock, query, size)).setup().generate().compile().create()
   }
-  sock.onData = bytes => parser.parse(bytes)
+  sock.onData = parser.parse
+  sock.parser = parser
+
   await start(sock)
   await authenticate(sock, parser.salt)
   return sock

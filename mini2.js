@@ -1,11 +1,5 @@
 const justify = require('@justify')
-const postgres = require('pg.js')
-
-async function setup (sock) {
-  const { worlds } = queries
-  const worldsQuery = await sock.createQuery(worlds, maxQuery).setup().generate().compile().create()
-  sock.getWorldById = id => worldsQuery.run([id])
-}
+const postgres = require('@pg')
 
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
 
@@ -18,7 +12,12 @@ const poolSize = parseInt(just.env().PGPOOL || just.sys.cpus, 10)
 
 let next = 0
 
-async function main (args) {
+async function setup (sock) {
+  const worldsQuery = await sock.create(queries.worlds, maxQuery)
+  sock.getWorldById = id => worldsQuery.run([id])
+}
+
+async function main () {
   const pool = await connect(db, poolSize)
   await Promise.all(pool.map(sock => setup(sock)))
   const server = createServer()
@@ -33,4 +32,4 @@ async function main (args) {
   server.name = config.server.name
 }
 
-main(just.args.slice(2)).catch(err => just.error(err.stack))
+main().catch(err => just.error(err.stack))
