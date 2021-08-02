@@ -97,7 +97,7 @@ function generateBulkUpdate (table, field, id, updates = 5, type = postgres.cons
   sql.push(getClauses(updates))
   sql.push(`else ${field}`)
   sql.push(`end where ${id} in (${getIds(updates)})`)
-  return { formats, name: `${table}.${updates}`, params: updates * 2, sql: sql.join('\n') }
+  return { formats, name: `${updates}`, params: updates * 2, sql: sql.join('\n') }
 }
 
 function sortByMessage (a, b) {

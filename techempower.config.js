@@ -27,10 +27,10 @@ const templates = {
 
 const queries = {
   update: {
-    name: 'u1'
+    name: 'A'
   },
   worlds: {
-    name: 's1',
+    name: 'B',
     sql: 'select id, randomNumber from World where id = $1',
     fields: [
       { format: BinaryInt, name: 'id', oid: INT4OID },
@@ -40,7 +40,7 @@ const queries = {
     formats: [BinaryInt]
   },
   fortunes: {
-    name: 's2',
+    name: 'C',
     sql: 'select * from Fortune',
     fields: [
       { format: BinaryInt, name: 'id', oid: INT4OID },

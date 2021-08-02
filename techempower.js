@@ -3,19 +3,42 @@ const justify = require('@justify')
 const postgres = require('@pg')
 const html = require('@html')
 const util = require('util.js')
+const cache = require('@cache')
+
+// config
 const config = require('techempower.config.js')
 
-// namespace imports
+// namespace and config imports
 const { connect } = postgres
 const { createServer } = justify
 const { maxRandom, maxQuery, httpd, queries, db, templates } = config
 const { port, address } = httpd
 const { generateBulkUpdate, sortByMessage, sprayer } = util
+const { SimpleCache } = cache
 
 // helper functions
 const spray = sprayer(maxQuery)
 const getRandom = () => Math.ceil(Math.random() * maxRandom)
 const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1)
+
+async function setupConnection (sock) {
+  const { worlds, fortunes } = queries
+  const updates = [{ run: () => Promise.resolve([]) }]
+  const fortunesQuery = await sock.create(fortunes, maxQuery)
+  const worldsQuery = await sock.create(worlds, maxQuery)
+  for (let i = 1; i <= maxQuery; i++) {
+    const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
+    const bulk = Object.assign(queries.update, update)
+    updates.push(await sock.create(bulk))
+  }
+  sock.getAllFortunes = () => fortunesQuery.run()
+  sock.getWorldById = id => worldsQuery.run([id])
+  sock.getWorldsById = ids => worldsQuery.run(ids)
+  sock.updateWorlds = worlds => {
+    updates[worlds.length].run([worlds.flatMap(w => [w.id, w.randomnumber])])
+  }
+  sock.worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
+}
 
 // async main. any exceptions will be caught in the handler below
 async function main () {
@@ -29,23 +52,7 @@ async function main () {
   const pool = await connect(db, poolSize)
 
   // compile and prepare sql statements when we connect to each database
-  await Promise.all(pool.map(async sock => {
-    const { worlds, fortunes } = queries
-    const updates = [{ run: () => Promise.resolve([]) }]
-    const fortunesQuery = await sock.create(fortunes, maxQuery)
-    const worldsQuery = await sock.create(worlds, maxQuery)
-    for (let i = 1; i <= maxQuery; i++) {
-      const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
-      const bulk = Object.assign(queries.update, update)
-      updates.push(await sock.create(bulk))
-    }
-    sock.getAllFortunes = () => fortunesQuery.run()
-    sock.getWorldById = id => worldsQuery.run([id])
-    sock.getWorldsById = ids => worldsQuery.run(ids)
-    sock.updateWorlds = worlds => {
-      updates[worlds.length].run([worlds.flatMap(w => [w.id, w.randomnumber])])
-    }
-  }))
+  await Promise.all(pool.map(setupConnection))
 
   // the connection pool is created and bootstrapped, set up the web server
   const server = createServer(httpd)
@@ -71,7 +78,14 @@ async function main () {
     }, { qs: true })
     .get('/json', (req, res) => res.json(JSON.stringify(json)))
     .get('/plaintext', (req, res) => res.text(message))
-    .connect(sock => (sock.db = pool[sock.fd % poolSize]))
+    .get('/cached-worlds', async (req, res) => {
+      const { worldCache } = res.socket.db
+      const worlds = await Promise.all(spray(getCount(req.query), () => worldCache.get(getRandom())))
+      res.json(JSON.stringify(worlds))
+    }, { qs: true })
+    .connect(sock => {
+      sock.db = pool[sock.fd % poolSize]
+    })
 
   // listen on the given port and address
   const ok = server.listen(port, address)
