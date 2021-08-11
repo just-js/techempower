@@ -1,6 +1,6 @@
 // requires
 const justify = require('@justify')
-const postgres = require('@pg')
+const postgres = require('../libs/pg/pg.js')
 const html = require('@html')
 const util = require('util.js')
 const cache = require('@cache')
@@ -31,12 +31,10 @@ async function setupConnection (sock) {
     const bulk = Object.assign(queries.update, update)
     updates.push(await sock.create(bulk))
   }
-  sock.getAllFortunes = () => fortunesQuery.run()
-  sock.getWorldById = id => worldsQuery.run([id])
-  sock.getWorldsById = ids => worldsQuery.run(ids)
-  sock.updateWorlds = worlds => {
-    updates[worlds.length].run([worlds.flatMap(w => [w.id, w.randomnumber])])
-  }
+  sock.getAllFortunes = () => fortunesQuery.runBatch()
+  sock.getWorldById = id => worldsQuery.runBatch([id])
+  sock.getWorldsById = ids => worldsQuery.runBatch(ids)
+  sock.updates = updates
   sock.worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
 }
 
@@ -57,10 +55,18 @@ async function main () {
   // the connection pool is created and bootstrapped, set up the web server
   const server = createServer(httpd)
     .get('/update', async (req, res) => {
-      const { getWorldsById, updateWorlds } = res.socket.db
-      const worlds = await getWorldsById(spray(getCount(req.query), getRandom))
-      worlds.forEach(r => (r.randomnumber = getRandom()))
-      await updateWorlds(worlds)
+      const { getWorldsById, updates } = res.socket.db
+      const count = getCount(req.query)
+      const worlds = await getWorldsById(spray(count, getRandom))
+      const updateWorlds = updates[count]
+      const len = count
+      for (let i = 0; i < len; i++) {
+        const world = worlds[i]
+        world.randomnumber = getRandom()
+        updateWorlds.query.params[i * 2] = world.id
+        updateWorlds.query.params[(i * 2) + 1] = world.randomnumber
+      }
+      await updateWorlds.runSingle()
       res.json(JSON.stringify(worlds))
     }, { qs: true })
     .get('/db', async (req, res) => {
@@ -69,7 +75,7 @@ async function main () {
     })
     .get('/fortunes', async (req, res) => {
       const { getAllFortunes } = res.socket.db
-      res.html(template.call([extra, ...(await getAllFortunes())].sort(sortByMessage)))
+      res.html(template.call(sortByMessage([extra, ...(await getAllFortunes())])))
     })
     .get('/query', async (req, res) => {
       const { getWorldsById } = res.socket.db

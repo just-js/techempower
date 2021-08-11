@@ -100,10 +100,18 @@ function generateBulkUpdate (table, field, id, updates = 5, type = postgres.cons
   return { formats, name: `${updates}`, params: updates * 2, sql: sql.join('\n') }
 }
 
-function sortByMessage (a, b) {
-  if (a.message > b.message) return 1
-  if (a.message < b.message) return -1
-  return 0
+function sortByMessage (arr) {
+  const n = arr.length
+  for (let i = 1; i < n; i++) {
+    const c = arr[i]
+    let j = i - 1
+    while ((j > -1) && (c.message < arr[j].message)) {
+      arr[j + 1] = arr[j]
+      j--
+    }
+    arr[j + 1] = c
+  }
+  return arr
 }
 
 module.exports = { stringify, sprayer, generateBulkUpdate, sortByMessage }
