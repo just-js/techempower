@@ -1,3 +1,11 @@
+const { constants } = require('@pg')
+const cache = require('@cache')
+const { SimpleCache } = cache
+const config = require('techempower.config.js')
+const { readFile } = require('fs')
+const threading = just.library('thread')
+const { spawn } = threading.thread
+
 /**
  * Utility function to generate an array of N values populated with provided
  * map function. There seems to be no simpler/quicker way to do this in JS.
@@ -13,59 +21,6 @@ function sprayer (max = 100) {
 }
 
 /**
- * Stringify replacement for pretty printing JS objects
- */
-
-let memo = new Map()
-
-function replacer (k, v) {
-  try {
-    if (typeof v === 'object') {
-      if (memo.has(v)) return '<repeat>'
-      memo.set(v)
-    }
-    if (typeof v === 'bigint') {
-      return Number(v)
-    }
-    if (!v) {
-      if (typeof v !== 'boolean' && typeof v !== 'number') return '<empty>'
-    }
-    if (v.constructor && v.constructor.name === 'ArrayBuffer') {
-      return 'ArrayBuffer ' + v.byteLength
-    }
-    if (v.constructor && v.constructor.name === 'Uint8Array') {
-      return 'Uint8Array ' + v.length
-    }
-  } catch (err) {
-    just.error(`${AR}error in stringify replacer${AD}\n${err.stack}`)
-  }
-  return v
-}
-
-const { ANSI } = require('@binary')
-const { AD, AG, AR, AB, AM, AC, AY } = ANSI
-
-const stringify = (o, sp = '  ') => {
-  memo = new Map()
-  const text = JSON.stringify(o, replacer, sp)
-  if (!text) return
-  return text.replace(/\s{8}"(.+)":/g, `        ${AB}$1${AD}:`)
-    .replace(/\s{6}"(.+)":/g, `      ${AC}$1${AD}:`)
-    .replace(/\s{4}"(.+)":/g, `    ${AG}$1${AD}:`)
-    .replace(/\s\s"(.+)":/g, `  ${AY}$1${AD}:`)
-    .replace(/([{}])/g, `${AM}$1${AD}`)
-    .replace(/\[(.+)\]/g, `${AG}[${AD}$1${AG}]${AD}`)
-    .replace(/"<empty>"/g, `${AC}<empty>${AD}`)
-    .replace(/"<repeat>"/g, `${AC}<repeat>${AD}`)
-}
-
-/**
- * Postgres Helper for Generating bulk update SQL Starement
- */
-
-const postgres = require('@pg')
-
-/**
  * Generate a Bulk Update SQL statement definition which can be passed to
  * sock.create. For a given table, identity column and column to be updated, it 
  * will generate a single SQL statement to update all fields in one statement
@@ -76,7 +31,7 @@ const postgres = require('@pg')
  * @param {string} updates - The number of rows to update in the statement
  * @param {string} type    - The name of the table
  */
-function generateBulkUpdate (table, field, id, updates = 5, type = postgres.constants.BinaryInt) {
+function generateBulkUpdate (table, field, id, updates = 5, type = constants.BinaryInt) {
   function getIds (count) {
     const updates = []
     for (let i = 1; i < (count * 2); i += 2) {
@@ -114,4 +69,46 @@ function sortByMessage (arr) {
   return arr
 }
 
-module.exports = { stringify, sprayer, generateBulkUpdate, sortByMessage }
+async function setupConnection (sock) {
+  const { worlds, fortunes } = queries
+  const updates = [{ run: () => Promise.resolve([]) }]
+  const fortunesQuery = await sock.create(fortunes, 1)
+  const worldsQuery = await sock.create(worlds, maxQuery)
+  for (let i = 1; i <= maxQuery; i++) {
+    const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
+    const bulk = Object.assign(queries.update, update)
+    updates.push(await sock.create(bulk))
+  }
+  sock.getWorldById = id => {
+    worldsQuery.query.params[0] = id
+    return worldsQuery.runSingle()
+  }
+  sock.getAllFortunes = () => fortunesQuery.runSingle()
+  sock.getWorldsById = ids => worldsQuery.runBatch(ids)
+  sock.updates = updates
+  const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
+  worldCache.getRandom = () => worldCache.get(getRandom())
+  sock.worldCache = worldCache
+}
+
+const { maxRandom, maxQuery, queries } = config
+const getRandom = () => Math.ceil(Math.random() * maxRandom)
+const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1)
+const spray = sprayer(maxQuery)
+
+function threadify () {
+  const source = readFile(just.args[1])
+  const cpus = parseInt(just.env().CPUS || just.sys.cpus, 10)
+  for (let i = 0; i < cpus; i++) {
+    spawn(source, just.builtin('just.js'), just.args.slice(1))
+  }
+  just.setInterval(() => {
+    const { user, system } = just.cpuUsage()
+    const { rss } = just.memoryUsage()
+    const totalMem = Math.floor(Number(rss) / (1024 * 1024))
+    const memPerThread = Math.floor(totalMem / cpus)
+    just.print(`mem ${totalMem} / ${memPerThread} cpu (${user.toFixed(2)}/${system.toFixed(2)}) ${(user + system).toFixed(2)}`)
+  }, 1000)
+}
+
+module.exports = { threadify, getRandom, getCount, setupConnection, spray, generateBulkUpdate, sortByMessage }

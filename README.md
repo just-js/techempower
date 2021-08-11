@@ -1,6 +1,6 @@
 # [Just-JS](https://github.com/just-js) Benchmarking Test
 
-This test benchmarks the [Just-JS](https://github.com/just-js) framework. Just-JS is an in progress javascript framework for x86_64 linux.
+This test benchmarks the [Just-JS](https://github.com/just-js) framework.
 
 Author: Andrew Johnston <billy@billywhizz.io>
 
@@ -42,20 +42,3 @@ http://localhost:8080/fortunes
 ### CACHED QUERY
 
 http://localhost:8080/cached-world?q=
-
-## Todo
-- fix spawn.js socketpairs for stdin/stdout/stderr
-- module support
-- just a dockerfile with a FROM - build from just-js/techempower using github?
-- check all return codes
-- tests
-- fuzzing
-- cpu/memory/io usage stats
-
-## Optimizations
-- test SIMD for html escape
-- optimize http parser
-- SetAlignedPointer for ArrayBuffers
-- test syscall overhead
-- io_uring
-- StringBuffers
