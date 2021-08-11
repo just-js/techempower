@@ -24,15 +24,18 @@ const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuer
 async function setupConnection (sock) {
   const { worlds, fortunes } = queries
   const updates = [{ run: () => Promise.resolve([]) }]
-  const fortunesQuery = await sock.create(fortunes, maxQuery)
+  const fortunesQuery = await sock.create(fortunes, 1)
   const worldsQuery = await sock.create(worlds, maxQuery)
   for (let i = 1; i <= maxQuery; i++) {
     const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
     const bulk = Object.assign(queries.update, update)
     updates.push(await sock.create(bulk))
   }
-  sock.getAllFortunes = () => fortunesQuery.runBatch()
-  sock.getWorldById = id => worldsQuery.runBatch([id])
+  sock.getWorldById = id => {
+    worldsQuery.query.params[0] = id
+    return worldsQuery.runSingle()
+  }
+  sock.getAllFortunes = () => fortunesQuery.runSingle()
   sock.getWorldsById = ids => worldsQuery.runBatch(ids)
   sock.updates = updates
   sock.worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
@@ -59,12 +62,11 @@ async function main () {
       const count = getCount(req.query)
       const worlds = await getWorldsById(spray(count, getRandom))
       const updateWorlds = updates[count]
-      const len = count
-      for (let i = 0; i < len; i++) {
-        const world = worlds[i]
+      let i = 0
+      for (const world of worlds) {
         world.randomnumber = getRandom()
-        updateWorlds.query.params[i * 2] = world.id
-        updateWorlds.query.params[(i * 2) + 1] = world.randomnumber
+        updateWorlds.query.params[i++] = world.id
+        updateWorlds.query.params[i++] = world.randomnumber
       }
       await updateWorlds.runSingle()
       res.json(JSON.stringify(worlds))
