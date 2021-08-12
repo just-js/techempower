@@ -17,7 +17,8 @@ const db = {
 const httpd = {
   address: '0.0.0.0',
   port: 8080,
-  name: 'j'
+  name: 'j',
+  stackTraces: false
 }
 
 const templates = {
@@ -51,8 +52,5 @@ const queries = {
 
 const maxRandom = 10000
 const maxQuery = 50
-const stackTraces = false
 
-module.exports = {
-  db, httpd, maxRandom, maxQuery, templates, queries, stackTraces
-}
+module.exports = { db, httpd, maxRandom, maxQuery, templates, queries }
