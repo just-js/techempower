@@ -20,12 +20,9 @@ async function main () {
   const json = { message }
   const template = html.load(templates.fortunes, templates.settings)
 
-  // create connection pool and await connections
   const pool = await connect(db, poolSize)
-  // compile and prepare sql statements when we connect to each database
   await Promise.all(pool.map(setupConnection))
 
-  // the connection pool is created and bootstrapped, set up the web server
   const server = createServer(httpd)
     .get('/update', async (req, res) => {
       const { getWorldsById, updates } = res.socket.db
@@ -73,8 +70,4 @@ async function main () {
   just.print(`listening on ${address}:${port}`)
 }
 
-if (just.sys.tid() !== just.sys.pid()) {
-  main().catch(err => just.error(err.stack))
-} else {
-  threadify()
-}
+threadify(main)

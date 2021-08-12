@@ -96,14 +96,19 @@ const getRandom = () => Math.ceil(Math.random() * maxRandom)
 const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1)
 const spray = sprayer(maxQuery)
 
-function threadify () {
+function threadify (main) {
+  if (just.sys.tid() !== just.sys.pid()) {
+    main().catch(err => just.error(err.stack))
+    return
+  }
   let source = just.builtin('techempower.js')
   if (!source) {
     source = readFile(just.args[1])
   }
   const cpus = parseInt(just.env().CPUS || just.sys.cpus, 10)
   for (let i = 0; i < cpus; i++) {
-    spawn(source, just.builtin('just.js'), just.args)
+    const tid = spawn(source, just.builtin('just.js'), just.args)
+    just.print(`thread ${tid} spawned`)
   }
   just.setInterval(() => {
     const { user, system } = just.cpuUsage()

@@ -1,24 +1,17 @@
-FROM debian:stretch-slim AS builder
+FROM debian:buster-slim AS builder
 RUN apt update
+RUN apt upgrade -y
 RUN apt install -y g++ curl make tar gzip libfindbin-libs-perl
-RUN curl -L -o 0.0.5.tar.gz -L https://github.com/just-js/just/archive/0.0.5.tar.gz
-RUN tar -zxvf 0.0.5.tar.gz
-WORKDIR /just-0.0.5
-RUN make runtime
-RUN curl -L -o modules.tar.gz https://github.com/just-js/modules/archive/0.0.5.tar.gz
-RUN tar -zxvf modules.tar.gz
-RUN mv modules-0.0.5 modules
-RUN JUST_HOME=$(pwd) make -C modules/picohttp/ deps http.so
-RUN JUST_HOME=$(pwd) make -C modules/html/ html.so
-
-FROM debian:stretch-slim
+#COPY just /usr/local/bin/just
+RUN curl -L -o /usr/local/bin/just https://github.com/just-js/just/releases/download/0.1.2/just
 WORKDIR /app
-RUN mkdir -p /app/lib
-COPY lib/stringify.js lib/connection.js lib/dns.js lib/http.js lib/lookup.js lib/pg.js lib/tcp.js lib/md5.js lib/monitor.js ./lib/
-COPY realistic.js spawn.js ./
-COPY --from=builder /just-0.0.5/just /bin/just
-COPY --from=builder /just-0.0.5/modules/picohttp/http.so ./
-COPY --from=builder /just-0.0.5/modules/html/html.so ./
-ENV LD_LIBRARY_PATH=/app
+COPY placeholder.js ./
+RUN just build --clean --static placeholder.js
+COPY techempower.js util.js tfb.js fortunes.html ./
+RUN just build --clean --static techempower.js
+
+FROM gcr.io/distroless/static:latest
+COPY --from=builder /app/techempower /bin/techempower
+COPY --from=builder /app/fortunes.html /bin/fortunes.html
 ENV PGPOOL=1
-CMD ["just", "spawn.js", "realistic.js"]
+CMD ["techempower"]
