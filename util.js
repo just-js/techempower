@@ -1,7 +1,7 @@
 const { constants } = require('@pg')
 const cache = require('@cache')
 const { SimpleCache } = cache
-const config = require('techempower.config.js')
+const config = require('tfb.js')
 const { readFile } = require('fs')
 const threading = just.library('thread')
 const { spawn } = threading.thread
@@ -97,10 +97,13 @@ const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuer
 const spray = sprayer(maxQuery)
 
 function threadify () {
-  const source = readFile(just.args[1])
+  let source = just.builtin('techempower.js')
+  if (!source) {
+    source = readFile(just.args[1])
+  }
   const cpus = parseInt(just.env().CPUS || just.sys.cpus, 10)
   for (let i = 0; i < cpus; i++) {
-    spawn(source, just.builtin('just.js'), just.args.slice(1))
+    spawn(source, just.builtin('just.js'), just.args)
   }
   just.setInterval(() => {
     const { user, system } = just.cpuUsage()
