@@ -79,12 +79,58 @@ async function setupConnection (sock) {
     const bulk = Object.assign(queries.update, update)
     updates.push(await sock.create(bulk))
   }
+  sock.updateWorlds = (worlds, count) => {
+    const updateWorlds = updates[count]
+    let i = 0
+    for (const world of worlds) {
+      world.randomnumber = getRandom()
+      updateWorlds.query.params[i++] = world.id
+      updateWorlds.query.params[i++] = world.randomnumber
+    }
+    const promise = updateWorlds.runSingle()
+    updateWorlds.commit()
+    return promise
+  }
+  worldsQuery.queue = 0
+  fortunesQuery.queue = 0
   sock.getWorldById = id => {
     worldsQuery.query.params[0] = id
-    return worldsQuery.runSingle()
+    const promise = worldsQuery.runSingle()
+    worldsQuery.queue++
+    if (worldsQuery.queue > 15) {
+      worldsQuery.commit()
+      worldsQuery.queue = 0
+    }
+    return promise
   }
-  sock.getAllFortunes = () => fortunesQuery.runSingle()
-  sock.getWorldsById = ids => worldsQuery.runBatch(ids)
+  sock.timer = just.setInterval(() => {
+    if (worldsQuery.queue > 0) {
+      worldsQuery.commit()
+      worldsQuery.queue = 0
+    }
+    if (fortunesQuery.queue > 0) {
+      fortunesQuery.commit()
+      fortunesQuery.queue = 0
+    }
+  }, 100)
+  sock.getAllFortunes = () => {
+    const promise = fortunesQuery.runSingle()
+    fortunesQuery.queue++
+    if (fortunesQuery.queue > 15) {
+      fortunesQuery.commit()
+      fortunesQuery.queue = 0
+    }
+    return promise
+  }
+  sock.getWorldsById = ids => {
+    const promise = worldsQuery.runBatch(ids)
+    worldsQuery.queue++
+    if (worldsQuery.queue > 15) {
+      worldsQuery.commit()
+      worldsQuery.queue = 0
+    }
+    return promise
+  }
   sock.updates = updates
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())

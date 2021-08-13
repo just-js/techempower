@@ -25,17 +25,10 @@ async function main () {
 
   const server = createServer(httpd)
     .get('/update', async (req, res) => {
-      const { getWorldsById, updates } = res.socket.db
+      const { getWorldsById, updateWorlds } = res.socket.db
       const count = getCount(req.query)
       const worlds = await getWorldsById(spray(count, getRandom))
-      const updateWorlds = updates[count]
-      let i = 0
-      for (const world of worlds) {
-        world.randomnumber = getRandom()
-        updateWorlds.query.params[i++] = world.id
-        updateWorlds.query.params[i++] = world.randomnumber
-      }
-      await updateWorlds.runSingle()
+      await updateWorlds(worlds, count)
       res.json(JSON.stringify(worlds))
     }, { qs: true })
     .get('/db', async (req, res) => {

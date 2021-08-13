@@ -51,6 +51,6 @@ const queries = {
 }
 
 const maxRandom = 10000
-const maxQuery = 50
+const maxQuery = 500
 
 module.exports = { db, httpd, maxRandom, maxQuery, templates, queries }
