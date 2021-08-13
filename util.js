@@ -74,13 +74,18 @@ async function setupConnection (sock) {
   const updates = [{ run: () => Promise.resolve([]) }]
   const fortunesQuery = await sock.create(fortunes, 1)
   const worldsQuery = await sock.create(worlds, maxQuery)
-  for (let i = 1; i <= maxQuery; i++) {
-    const update = generateBulkUpdate('world', 'randomnumber', 'id', i)
-    const bulk = Object.assign(queries.update, update)
-    updates.push(await sock.create(bulk))
-  }
-  sock.updateWorlds = (worlds, count) => {
-    const updateWorlds = updates[count]
+  sock.updateWorlds = async (worlds, count) => {
+    let updateWorlds = updates[count]
+    if (!updateWorlds) {
+      const update = generateBulkUpdate('world', 'randomnumber', 'id', count)
+      const bulk = Object.assign(queries.update, update)
+      updateWorlds = sock.create(bulk)
+      updates[count] = updateWorlds
+      await updateWorlds
+    }
+    if (!updateWorlds.query) {
+      updateWorlds = await updateWorlds
+    }
     let i = 0
     for (const world of worlds) {
       world.randomnumber = getRandom()
@@ -131,7 +136,6 @@ async function setupConnection (sock) {
     }
     return promise
   }
-  sock.updates = updates
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())
   sock.worldCache = worldCache
