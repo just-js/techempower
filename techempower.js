@@ -1,9 +1,9 @@
 const justify = require('@justify')
 const postgres = require('@pg')
 const html = require('@html')
+const threadify = require('@threadify')
 const util = require('util.js')
 const config = require('tfb.config.js')
-const threadify = require('@threadify')
 
 const { setupConnection, sortByMessage, spray, getRandom, getCount } = util
 
