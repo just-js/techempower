@@ -1,5 +1,5 @@
 const cache = require('@cache')
-const postgres = require('../libs/pg/pg.js')
+const postgres = require('@pg')
 
 const config = require('tfb.config.js')
 
@@ -69,24 +69,18 @@ async function setupConnection (sock) {
   const updates = [{ run: () => Promise.resolve([]) }]
   const fortunesQuery = await sock.create(fortunes, 1)
   const worldsQuery = await sock.create(worlds, maxQuery)
-  const threshold = 15
-  let queue = 0
-  const commit = () => {
-    if (queue === 0) return
-    worldsQuery.commit()
-    queue = 0
-  }
-  function enqueue (promise) {
-    if (++queue > threshold) commit()
-    return promise
-  }
   function getWorldById (id) {
     worldsQuery.query.params[0] = id
     return worldsQuery.runSingle()
   }
-  sock.getWorldById = id => enqueue(getWorldById(id))
-  sock.getAllFortunes = () => enqueue(fortunesQuery.runSingle())
-  sock.getWorldsById = ids => enqueue(worldsQuery.runBatch(ids))
+  sock.stats = () => {
+    const worlds = { pending: worldsQuery.pending, syncing: worldsQuery.syncing }
+    const fortunes = { pending: fortunesQuery.pending, syncing: fortunesQuery.syncing }
+    return { worlds, fortunes, parser: sock.parser.stats() }
+  }
+  sock.getWorldById = getWorldById
+  sock.getAllFortunes = () => fortunesQuery.runSingle()
+  sock.getWorldsById = ids => worldsQuery.runBatch(ids)
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())
   sock.worldCache = worldCache
@@ -108,11 +102,8 @@ async function setupConnection (sock) {
       updateWorlds.query.params[i++] = world.id
       updateWorlds.query.params[i++] = world.randomnumber
     }
-    const promise = updateWorlds.runSingle()
-    commit()
-    return promise
+    return updateWorlds.runSingle()
   }
-  sock.timer = just.setInterval(commit, 10)
 }
 
 module.exports = { getRandom, getCount, setupConnection, spray, sortByMessage }

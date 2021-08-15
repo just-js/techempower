@@ -28,7 +28,8 @@ const templates = {
 
 const queries = {
   update: {
-    name: 'A'
+    name: 'A',
+    batchMode: false
   },
   worlds: {
     name: 'B',

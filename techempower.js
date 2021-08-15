@@ -1,5 +1,5 @@
 const justify = require('@justify')
-const postgres = require('../libs/pg/pg.js')
+const postgres = require('@pg')
 const html = require('@html')
 const util = require('util.js')
 const config = require('tfb.config.js')
@@ -17,6 +17,8 @@ async function main () {
   await (setupConnection(sock))
 
   const { getWorldsById, updateWorlds, getWorldById, getAllFortunes, worldCache } = sock
+
+  let conn = 0
 
   const server = justify.createServer(config.httpd)
   server.get('/update', async (res, req) => {
@@ -44,6 +46,15 @@ async function main () {
     res.json(JSON.stringify(worlds))
   })
   server.listen(config.httpd.port, config.httpd.address)
+  if (just.env().TFBTRACE) {
+    server.connect(() => conn++)
+    server.disconnect(() => conn--)
+    just.setInterval(() => {
+      const { worlds, fortunes, parser } = sock.stats()
+      just.print(`chld ${just.sys.tid()} conn ${conn} worlds: p ${worlds.pending} s ${worlds.syncing} fortunes: p ${fortunes.pending} s ${fortunes.syncing}`)
+      just.print(JSON.stringify(parser, null, '  '))
+    }, 1000)
+  }
 }
 
 threadify.spawn(main)
