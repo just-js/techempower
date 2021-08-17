@@ -1,5 +1,5 @@
 const cache = require('@cache')
-const postgres = require('@pg')
+const postgres = require('pg.js')
 
 const config = require('tfb.config.js')
 
@@ -71,7 +71,7 @@ async function setupConnection (sock) {
   const worldsQuery = await sock.create(worlds, maxQuery)
   function getWorldById (id) {
     worldsQuery.query.params[0] = id
-    return worldsQuery.runSingle()
+    return worldsQuery.runSingleBuffer(false)
   }
   sock.stats = () => {
     const worlds = { pending: worldsQuery.pending, syncing: worldsQuery.syncing }
@@ -79,7 +79,7 @@ async function setupConnection (sock) {
     return { worlds, fortunes, parser: sock.parser.stats() }
   }
   sock.getWorldById = getWorldById
-  sock.getAllFortunes = () => fortunesQuery.runSingle()
+  sock.getAllFortunes = () => fortunesQuery.runSingleBuffer(false)
   sock.getWorldsById = ids => worldsQuery.runBatch(ids)
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())
@@ -102,7 +102,7 @@ async function setupConnection (sock) {
       updateWorlds.query.params[i++] = world.id
       updateWorlds.query.params[i++] = world.randomnumber
     }
-    return updateWorlds.runSingle()
+    return updateWorlds.runSingleBuffer(true)
   }
 }
 

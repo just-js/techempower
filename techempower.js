@@ -1,16 +1,20 @@
+const stringify = require('@stringify')
 const justify = require('@justify')
-const postgres = require('@pg')
+const postgres = require('pg.js')
 const html = require('@html')
 const threadify = require('@threadify')
 const util = require('util.js')
 const config = require('tfb.config.js')
 
 const { setupConnection, sortByMessage, spray, getRandom, getCount } = util
+const { sjs, attr } = stringify
 
 async function main () {
   const extra = { id: 0, message: 'Additional fortune added at request time.' }
   const message = 'Hello, World!'
   const json = { message }
+  const sJSON = sjs({ message: attr('string') })
+  const sDB = sjs({ id: attr('number'), randomnumber: attr('number') })
   const template = html.load(config.templates.fortunes, config.templates.settings)
 
   const sock = (await postgres.connect(config.db, 1))[0]
@@ -21,6 +25,7 @@ async function main () {
   let conn = 0
 
   const server = justify.createServer(config.httpd)
+  server.get('/json', res => res.json(sJSON(json)))
   server.get('/update', async (res, req) => {
     const count = getCount(req.parseUrl(true).query)
     const worlds = await getWorldsById(spray(count, getRandom))
@@ -38,7 +43,6 @@ async function main () {
   server.get('/db', async res => {
     res.json(JSON.stringify(await getWorldById(getRandom())))
   })
-  server.get('/json', res => res.json(JSON.stringify(json)))
   server.get('/plaintext', res => res.text(message))
   server.get('/cached-world', async (res, req) => {
     const count = getCount(req.parseUrl(true).query)
@@ -50,9 +54,8 @@ async function main () {
     server.connect(() => conn++)
     server.disconnect(() => conn--)
     just.setInterval(() => {
-      const { worlds, fortunes, parser } = sock.stats()
+      const { worlds, fortunes } = sock.stats()
       just.print(`chld ${just.sys.tid()} conn ${conn} worlds: p ${worlds.pending} s ${worlds.syncing} fortunes: p ${fortunes.pending} s ${fortunes.syncing}`)
-      just.print(JSON.stringify(parser, null, '  '))
     }, 1000)
   }
 }

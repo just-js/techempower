@@ -1,5 +1,5 @@
 // postgres imports
-const postgres = require('@pg')
+const postgres = require('pg.js')
 
 const { BinaryInt, VarChar, fieldTypes } = postgres.constants
 const { INT4OID, VARCHAROID } = fieldTypes
@@ -10,7 +10,8 @@ const db = {
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
   database: 'hello_world',
-  bufferSize: 256 * 1024
+  bufferSize: 256 * 1024,
+  noDelay: false
 }
 
 // web server configuration
