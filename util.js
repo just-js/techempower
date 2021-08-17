@@ -71,15 +71,15 @@ async function setupConnection (sock) {
   const worldsQuery = await sock.create(worlds, maxQuery)
   function getWorldById (id) {
     worldsQuery.query.params[0] = id
-    return worldsQuery.runSingleBuffer(false)
+    return worldsQuery.runSingle(false)
   }
   sock.stats = () => {
     const worlds = { pending: worldsQuery.pending, syncing: worldsQuery.syncing }
     const fortunes = { pending: fortunesQuery.pending, syncing: fortunesQuery.syncing }
-    return { worlds, fortunes, parser: sock.parser.stats() }
+    return { worlds, fortunes }
   }
   sock.getWorldById = getWorldById
-  sock.getAllFortunes = () => fortunesQuery.runSingleBuffer(false)
+  sock.getAllFortunes = () => fortunesQuery.runSingle(false)
   sock.getWorldsById = ids => worldsQuery.runBatch(ids)
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())
@@ -102,7 +102,7 @@ async function setupConnection (sock) {
       updateWorlds.query.params[i++] = world.id
       updateWorlds.query.params[i++] = world.randomnumber
     }
-    return updateWorlds.runSingleBuffer(true)
+    return updateWorlds.runSingle(true)
   }
 }
 

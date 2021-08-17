@@ -65,6 +65,7 @@ const {
 
 // Utilities
 function readCString (buf, u8, off) {
+  // todo: this is unsafe
   const start = off
   while (u8[off] !== 0) off++
   return buf.readString(off - start, start)
@@ -247,10 +248,7 @@ class Query {
     this.syncing = 0
     this.htmlEscape = html.escape
     this.synced = 0
-    if (query.batchMode === undefined) {
-      query.batchMode = true
-    }
-    this.batchMode = query.batchMode
+    this.last = null
   }
 
   setup () {
@@ -274,6 +272,7 @@ class Query {
       const exec = e.createExecMessage()
       e.off = exec.off
     }
+    this.last = bindings[size - 1]
     e.off = e.createSyncMessage().off
 
     const p = new Messaging(new ArrayBuffer(prepareDescribeLen), query)
@@ -492,74 +491,14 @@ class Query {
   }
 
   write (args, first) {}
+  writeSingle (off) {}
 
   // read the current rows from the buffers - to be overridden
   read () {
     return []
   }
 
-  // the 1 or more of the batch queries, passing in an array of arguments
-  // for each query we are running. args = [[a,b],[a,c],[b.c]] or [a,b,c]
   runBatch (args = [[]]) {
-    const batch = this
-    const { sock, size, bindings, exec } = this
-    const { callbacks } = sock
-    const { buffer } = exec
-    const n = args.length
-    const first = size - n
-    // write the arguments into the query buffers
-    batch.writeBatch(args, first)
-    // write the queries onto the wire
-    const start = bindings[first].offsets.start
-    const threshold = Math.floor(this.pending / 4)
-    // to do buffer the batches and turn off nagle
-    if (!this.batchMode || (this.pending < 8 || this.syncing > threshold)) {
-      const r = sock.write(buffer, exec.off - start, start)
-      if (r <= 0) return Promise.reject(new Error('Bad Write'))
-      this.syncing = 0
-    } else {
-      const r = sock.write(buffer, exec.off - 5 - start, start)
-      if (r <= 0) return Promise.reject(new Error('Bad Write'))
-      this.syncing++
-    }
-    this.pending++
-    const results = []
-    let done = 0
-    return new Promise((resolve, reject) => {
-      args.forEach(args => callbacks.push((err, rows) => {
-        // todo: what about the rest of the inflight callbacks?
-        if (err) {
-          reject(err)
-          return
-        }
-        // read the results from this query
-        if (rows === 0) {
-          resolve()
-          return
-        }
-        if (n === 1) {
-          batch.pending--
-          if (batch.syncing > 0 && batch.syncing >= batch.pending) {
-            batch.commit()
-            batch.syncing = 0
-          }
-          resolve([batch.read()])
-          return
-        }
-        results.push(batch.read())
-        if (++done === n) {
-          batch.pending--
-          if (batch.syncing > 0 && batch.syncing >= batch.pending) {
-            batch.commit()
-            batch.syncing = 0
-          }
-          resolve(results)
-        }
-      }))
-    })
-  }
-
-  runBatchBuffer (args = [[]]) {
     const batch = this
     const { sock, size, bindings, sync, exec } = this
     const { callbacks } = sock
@@ -612,26 +551,14 @@ class Query {
     })
   }
 
-  commit () {
-    const { sock, sync } = this
-    const { buffer } = sync
-    return sock.write(buffer, sync.off, 0)
-  }
-
-  purge () {
-    const { sock, flush } = this
-    const { buffer } = flush
-    return sock.write(buffer, flush.off, 0)
-  }
-
-  runSingleBuffer (commit = false) {
+  runSingle (commit = false) {
     const batch = this
-    const { sock, size, exec, sync, bindings } = batch
+    const { sock, exec, sync, last } = batch
     const { callbacks } = sock
     const { buffer } = exec
-    const binding = bindings[size - 1]
-    if (batch.writeSingle) batch.writeSingle(binding.paramStart)
-    const start = binding.offsets.start
+    const { paramStart, offsets } = last
+    if (batch.writeSingle) batch.writeSingle(paramStart)
+    const start = offsets.start
     if (commit || this.syncing >= this.pending) {
       sock.append(buffer, exec.off - start, start, true)
       this.syncing = 0
@@ -645,46 +572,6 @@ class Query {
         batch.pending--
         if (batch.syncing > 0 && batch.syncing >= batch.pending) {
           sock.append(sync.buffer, sync.off, 0, true)
-          batch.syncing = 0
-        }
-        if (err) {
-          reject(err)
-          return
-        }
-        if (rows === 0) {
-          resolve()
-          return
-        }
-        resolve(batch.read())
-      })
-    })
-  }
-
-  runSingle () {
-    const batch = this
-    const { sock, size, exec, bindings } = batch
-    const { callbacks } = sock
-    const { buffer } = exec
-    const binding = bindings[size - 1]
-    if (batch.writeSingle) batch.writeSingle(binding.paramStart)
-    const start = binding.offsets.start
-    const threshold = Math.floor(this.pending / 4)
-    // to do buffer the batches and turn off nagle
-    if (!this.batchMode || (this.pending < 8 || this.syncing > threshold)) {
-      const r = sock.write(buffer, exec.off - start, start)
-      if (r <= 0) return Promise.reject(new Error('Bad Write'))
-      this.syncing = 0
-    } else {
-      const r = sock.write(buffer, exec.off - 5 - start, start)
-      if (r <= 0) return Promise.reject(new Error('Bad Write'))
-      this.syncing++
-    }
-    this.pending++
-    return new Promise((resolve, reject) => {
-      callbacks.push((err, rows) => {
-        batch.pending--
-        if (batch.syncing > 0 && batch.syncing >= batch.pending) {
-          batch.commit()
           batch.syncing = 0
         }
         if (err) {
@@ -952,6 +839,236 @@ function createParser (buf) {
   }
   return parser
 }
+/*
+
+function createParser (buf) {
+  return new Parser(buf)
+}
+
+class Parser {
+  constructor (buffer) {
+    this.buf = buffer
+    const dv = new DataView(buffer)
+    const u8 = new Uint8Array(buffer)
+    this.dv = dv
+    this.u8 = u8
+    const fields = []
+    this.fields = fields
+    this.parameters = {}
+    this.type = 0
+    this.len = 0
+    const errors = []
+    this.errors = errors
+    const state = { start: 0, end: 0, rows: 0, running: false }
+    this.state = state
+    this.nextRow = 0
+    this.parseNext = 0
+    this.byteLength = buffer.byteLength
+    const { messageTypes } = constants
+    const parser = this
+    this.handlers = {
+      [messageTypes.AuthenticationOk]: (len, off) => {
+        // R = AuthenticationOk
+        const method = dv.getInt32(off)
+        off += 4
+        if (method === constants.AuthenticationMD5Password) {
+          parser.salt = buffer.slice(off, off + 4)
+          off += 4
+          parser.onMessage()
+        }
+        return off
+      },
+      [messageTypes.ErrorResponse]: (len, off) => {
+        // E = ErrorResponse
+        errors.length = 0
+        let fieldType = u8[off++]
+        while (fieldType !== 0) {
+          const val = readCString(buffer, u8, off)
+          errors.push({ type: fieldType, val })
+          off += (val.length + 1)
+          fieldType = u8[off++]
+        }
+        parser.onMessage()
+        return off
+      },
+      [messageTypes.RowDescription]: (len, off) => {
+        // T = RowDescription
+        const fieldCount = dv.getInt16(off)
+        off += 2
+        fields.length = 0
+        for (let i = 0; i < fieldCount; i++) {
+          const name = readCString(buffer, u8, off)
+          off += name.length + 1
+          const tid = dv.getInt32(off)
+          off += 4
+          const attrib = dv.getInt16(off)
+          off += 2
+          const oid = dv.getInt32(off)
+          off += 4
+          const size = dv.getInt16(off)
+          off += 2
+          const mod = dv.getInt32(off)
+          off += 4
+          const format = dv.getInt16(off)
+          off += 2
+          fields.push({ name, tid, attrib, oid, size, mod, format })
+        }
+        parser.onMessage()
+        return off
+      },
+      [messageTypes.CommandComplete]: (len, off) => {
+        // C = CommandComplete
+        state.end = off - 5
+        state.rows = parser.nextRow
+        state.running = false
+        off += len - 4
+        parser.nextRow = 0
+        parser.onMessage()
+        return off
+      },
+      [messageTypes.CloseComplete]: (len, off) => {
+        // 3 = CloseComplete
+        parser.onMessage()
+        return off + len - 4
+      },
+      [messageTypes.ParseComplete]: (len, off) => {
+        // 1 = ParseComplete
+        off += len - 4
+        parser.onMessage()
+        return off
+      },
+      [messageTypes.BindComplete]: (len, off) => {
+        // 2 = BindComplete
+        off += len - 4
+        parser.onMessage()
+        state.rows = 0
+        state.start = off
+        state.running = true
+        return off
+      },
+      [messageTypes.ReadyForQuery]: (len, off) => {
+        // Z = ReadyForQuery
+        parser.status = u8[off]
+        parser.onMessage()
+        off += len - 4
+        return off
+      },
+      [messageTypes.BackendKeyData]: (len, off) => {
+        // K = BackendKeyData
+        parser.pid = dv.getUint32(off)
+        off += 4
+        parser.key = dv.getUint32(off)
+        off += 4
+        parser.onMessage()
+        return off
+      },
+      [messageTypes.ParameterStatus]: (len, off) => {
+        // S = ParameterStatus
+        const key = readCString(buffer, u8, off)
+        off += (key.length + 1)
+        const val = readCString(buffer, u8, off)
+        off += val.length + 1
+        parser.parameters[key] = val
+        return off
+      },
+      [messageTypes.ParameterDescription]: (len, off) => {
+        // t = ParameterDescription
+        const nparams = dv.getInt16(off)
+        parser.params = []
+        off += 2
+        for (let i = 0; i < nparams; i++) {
+          parser.params.push(dv.getUint32(off))
+          off += 4
+        }
+        return off
+      },
+      [messageTypes.DataRow]: (len, off) => {
+        // D = DataRow
+        if (this.nextRow === 0) this.state.start = off - 5
+        parser.nextRow++
+        return off + len - 4
+      },
+      0: (len, off) => {
+        off += len - 4
+        parser.onMessage()
+        return off
+      }
+    }
+  }
+
+  parse (bytesRead) {
+    const { buf, parseNext, byteLength, state, dv, handlers } = this
+    let type
+    let len
+    let off = parseNext
+    const end = buf.offset + bytesRead
+    while (off < end) {
+      const remaining = end - off
+      let want = 5
+      // TODO: fix this
+      if (remaining < want) {
+        if (byteLength - off < 1024) {
+          if (state.running) {
+            const queryLen = off - state.start + remaining
+            just.error(`copyFrom 0 ${queryLen} ${state.start}`)
+            buf.copyFrom(buf, 0, queryLen, state.start)
+            buf.offset = queryLen
+            this.parseNext = off - state.start
+            state.start = 0
+            return
+          }
+          just.error(`copyFrom 1 ${remaining} ${off}`)
+          buf.copyFrom(buf, 0, remaining, off)
+          buf.offset = remaining
+          this.parseNext = 0
+          return
+        }
+        buf.offset = off + remaining
+        this.parseNext = off
+        return
+      }
+      type = this.type = dv.getUint8(off)
+      len = this.len = dv.getUint32(off + 1)
+      want = len + 1
+      if (remaining < want) {
+        if (byteLength - off < 1024) {
+          if (state.running) {
+            const queryLen = off - state.start + remaining
+            just.error(`copyFrom 2 ${queryLen} ${state.start} ${byteLength} ${off} ${byteLength - off}`)
+            buf.copyFrom(buf, 0, queryLen, state.start)
+            buf.offset = queryLen
+            this.parseNext = off - state.start
+            state.start = 0
+            return
+          }
+          just.error(`copyFrom 3 ${remaining} ${off}`)
+          buf.copyFrom(buf, 0, remaining, off)
+          buf.offset = remaining
+          this.parseNext = 0
+          return
+        }
+        buf.offset = off + remaining
+        this.parseNext = off
+        return
+      }
+      off += 5
+      off = (handlers[type || 0])(len, off)
+    }
+    this.parseNext = buf.offset = 0
+  }
+
+  free () {
+    const { state, fields, errors } = this
+    fields.length = 0
+    errors.length = 0
+    this.parameters = {}
+    this.nextRow = 0
+    this.parseNext = 0
+    state.start = state.end = state.rows = 0
+    state.running = false
+  }
+}
+*/
 
 // todo: move these to Query class
 function startupMessage (db) {
@@ -1013,6 +1130,7 @@ function md5AuthMessage ({ user, pass, salt }) {
 // todo - turn this into a PGSocket class that extends Socket from TCP
 function authenticate (sock, salt) {
   const { user, pass } = sock.config
+  // todo: check all return codes!
   sock.write(md5AuthMessage({ user, pass, salt }))
   return new Promise((resolve, reject) => {
     sock.callbacks.push(err => {
@@ -1048,7 +1166,7 @@ function connectSocket (config, buffer) {
           reject(new Error('Could Not Connect'))
           return
         }
-        // what to do if connection drops?
+        // what to do if connection drops? retries?
       }
       sock.onConnect = err => {
         if (err) {
@@ -1057,7 +1175,6 @@ function connectSocket (config, buffer) {
         }
         connected = true
         if (config.noDelay) sock.setNoDelay()
-        // if we do this and buffer the writes
         resolve(sock)
         return buffer
       }
@@ -1129,13 +1246,14 @@ async function createConnection (config) {
   const buffer = new ArrayBuffer(64 * 1024)
   const size = buffer.byteLength
   let offset = 0
-
+  const u8 = new Uint8Array(buffer)
   sock.append = (buf, len, off, flush = false) => {
     if (offset + len > size) {
       sock.write(buffer, offset, 0)
       offset = 0
     }
-    buffer.copyFrom(buf, offset, len, off)
+    u8.set(new Uint8Array(buf, off, len), offset)
+    //buffer.copyFrom(buf, offset, len, off)
     offset += len
     if (flush) sock.flush()
   }
@@ -1145,7 +1263,8 @@ async function createConnection (config) {
     offset = 0
   }
 
-  sock.onData = parser.parse
+  // todo: backpressure - pause/resume
+  sock.onData = bytes => parser.parse(bytes)
   sock.parser = parser
 
   await start(sock)
@@ -1154,9 +1273,6 @@ async function createConnection (config) {
 }
 
 function connect (config, poolSize = 1) {
-  if (poolSize === 1) {
-    return Promise.all([createConnection(config)])
-  }
   const connections = []
   for (let i = 0; i < poolSize; i++) {
     connections.push(createConnection(config))

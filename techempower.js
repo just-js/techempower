@@ -14,7 +14,6 @@ async function main () {
   const message = 'Hello, World!'
   const json = { message }
   const sJSON = sjs({ message: attr('string') })
-  const sDB = sjs({ id: attr('number'), randomnumber: attr('number') })
   const template = html.load(config.templates.fortunes, config.templates.settings)
 
   const sock = (await postgres.connect(config.db, 1))[0]
@@ -50,7 +49,7 @@ async function main () {
     res.json(JSON.stringify(worlds))
   })
   server.listen(config.httpd.port, config.httpd.address)
-  if (just.env().TFBTRACE) {
+  if (just.env().TRACE) {
     server.connect(() => conn++)
     server.disconnect(() => conn--)
     just.setInterval(() => {

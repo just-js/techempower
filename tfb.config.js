@@ -10,7 +10,7 @@ const db = {
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
   database: 'hello_world',
-  bufferSize: 256 * 1024,
+  bufferSize: 64 * 1024,
   noDelay: false
 }
 
@@ -29,8 +29,7 @@ const templates = {
 
 const queries = {
   update: {
-    name: 'A',
-    batchMode: false
+    name: 'A'
   },
   worlds: {
     name: 'B',
