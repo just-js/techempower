@@ -11,7 +11,8 @@ const db = {
   pass: 'benchmarkdbpass',
   database: 'hello_world',
   bufferSize: 64 * 1024,
-  noDelay: false
+  noDelay: false,
+  poolSize: 1
 }
 
 // web server configuration

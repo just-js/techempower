@@ -104,6 +104,13 @@ async function setupConnection (sock) {
     }
     return updateWorlds.runSingle(true)
   }
+  return sock
 }
 
-module.exports = { getRandom, getCount, setupConnection, spray, sortByMessage }
+async function setup (db) {
+  const sock = (await postgres.connect(db, 1))[0]
+  await (setupConnection(sock))
+  return sock
+}
+
+module.exports = { getRandom, getCount, setup, setupConnection, spray, sortByMessage }
