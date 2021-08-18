@@ -271,6 +271,7 @@ class Query {
       e.off = bind.off
       const exec = e.createExecMessage()
       e.off = exec.off
+      bind.eoff = exec.off
     }
     this.last = bindings[size - 1]
     e.off = e.createSyncMessage().off
@@ -553,17 +554,19 @@ class Query {
 
   runSingle (commit = false) {
     const batch = this
-    const { sock, exec, sync, last } = batch
+    const { sock, exec, sync } = batch
+    const binding = batch.bindings[batch.syncing]
+    const first = batch.bindings[0]
     const { callbacks } = sock
     const { buffer } = exec
-    const { paramStart, offsets } = last
-    if (batch.writeSingle) batch.writeSingle(paramStart)
-    const start = offsets.start
-    if (commit || this.syncing >= this.pending) {
-      sock.append(buffer, exec.off - start, start, true)
+    const { paramStart } = binding
+    batch.writeSingle(paramStart)
+    const start = first.offsets.start
+    if (commit || this.syncing >= this.pending || this.syncing === 64) {
+      sock.append(buffer, binding.eoff - start, start, false)
+      sock.append(sync.buffer, sync.off, 0, true)
       this.syncing = 0
     } else {
-      sock.append(buffer, exec.off - 5 - start, start, false)
       this.syncing++
     }
     this.pending++
@@ -571,6 +574,8 @@ class Query {
       callbacks.push((err, rows) => {
         batch.pending--
         if (batch.syncing > 0 && batch.syncing >= batch.pending) {
+          const binding = batch.bindings[batch.syncing - 1]
+          sock.append(buffer, binding.eoff - start, start, false)
           sock.append(sync.buffer, sync.off, 0, true)
           batch.syncing = 0
         }
@@ -1243,24 +1248,23 @@ async function createConnection (config) {
     if (!query.maxRows) query.maxRows = 0
     return (new Query(sock, query, size)).setup().generate().compile().create()
   }
+
   const buffer = new ArrayBuffer(64 * 1024)
   const size = buffer.byteLength
   let offset = 0
   const u8 = new Uint8Array(buffer)
+
   sock.append = (buf, len, off, flush = false) => {
     if (offset + len > size) {
       sock.write(buffer, offset, 0)
       offset = 0
     }
     u8.set(new Uint8Array(buf, off, len), offset)
-    //buffer.copyFrom(buf, offset, len, off)
     offset += len
-    if (flush) sock.flush()
-  }
-
-  sock.flush = () => {
-    sock.write(buffer, offset, 0)
-    offset = 0
+    if (flush) {
+      sock.write(buffer, offset, 0)
+      offset = 0
+    }
   }
 
   // todo: backpressure - pause/resume

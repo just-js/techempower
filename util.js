@@ -67,7 +67,7 @@ const spray = sprayer(maxQuery)
 async function setupConnection (sock) {
   const { worlds, fortunes } = queries
   const updates = [{ run: () => Promise.resolve([]) }]
-  const fortunesQuery = await sock.create(fortunes, 1)
+  const fortunesQuery = await sock.create(fortunes, maxQuery)
   const worldsQuery = await sock.create(worlds, maxQuery)
   function getWorldById (id) {
     worldsQuery.query.params[0] = id
