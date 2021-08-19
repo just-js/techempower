@@ -1,7 +1,7 @@
 const stringify = require('@stringify')
 const justify = require('@justify')
-const html = require('@html')
 const threadify = require('@threadify')
+const html = require('@html')
 const util = require('util.js')
 const config = require('tfb.config.js')
 
@@ -13,7 +13,6 @@ async function main () {
   const sJSON = stringify.sjs({ message: stringify.attr('string') })
   const { db, templates, httpd } = config
   const template = html.load(templates.fortunes, templates.settings)
-
   const {
     getWorldsById, updateWorlds, getWorldById,
     getAllFortunes, worldCache
