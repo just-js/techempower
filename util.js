@@ -5,7 +5,7 @@ const config = require('tfb.config.js')
 
 const { SimpleCache } = cache
 const { maxRandom, maxQuery, queries } = config
-const { generateBulkUpdate } = postgres
+const { connect, generateBulkUpdate } = postgres
 
 /**
  * Utility function to generate an array of N values populated with provided
@@ -112,7 +112,7 @@ async function setupConnection (sock) {
  * @param {Object} db - database configuration
  */
 async function setup (db) {
-  const sock = (await postgres.connect(db, 1))[0]
+  const sock = (await connect(db, 1))[0]
   await (setupConnection(sock))
   return sock
 }
