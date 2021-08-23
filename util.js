@@ -1,5 +1,5 @@
 const cache = require('@cache')
-const postgres = require('pg.js')
+const postgres = require('@pg')
 
 const config = require('tfb.config.js')
 

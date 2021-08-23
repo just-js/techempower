@@ -10,7 +10,7 @@ RUN make -C just install
 ENV JUST_HOME=/build/just
 ENV JUST_TARGET=/build/just
 WORKDIR /app
-COPY techempower.js pg.js util.js tfb.config.js fortunes.html ./
+COPY techempower.js util.js tfb.config.js fortunes.html ./
 RUN just build --clean --cleanall --static techempower.js
 
 FROM gcr.io/distroless/static:latest

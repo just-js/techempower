@@ -1,5 +1,5 @@
 // postgres imports
-const postgres = require('pg.js')
+const postgres = require('@pg')
 
 const { BinaryInt, VarChar, fieldTypes } = postgres.constants
 const { INT4OID, VARCHAROID } = fieldTypes
