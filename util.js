@@ -73,11 +73,6 @@ async function setupConnection (sock) {
     worldsQuery.query.params[0] = id
     return worldsQuery.runSingle(false)
   }
-  sock.stats = () => {
-    const worlds = { pending: worldsQuery.pending, syncing: worldsQuery.syncing }
-    const fortunes = { pending: fortunesQuery.pending, syncing: fortunesQuery.syncing }
-    return { worlds, fortunes }
-  }
   sock.getWorldById = getWorldById
   sock.getAllFortunes = () => fortunesQuery.runSingle(false)
   sock.getWorldsById = ids => worldsQuery.runBatch(ids)
