@@ -67,14 +67,14 @@ const spray = sprayer(maxQuery)
 async function setupConnection (sock) {
   const { worlds, fortunes } = queries
   const updates = [{ run: () => Promise.resolve([]) }]
-  const fortunesQuery = await sock.create(fortunes, maxQuery)
-  const worldsQuery = await sock.create(worlds, maxQuery)
+  const fortunesQuery = await sock.compile(fortunes, 2048)
+  const worldsQuery = await sock.compile(worlds, 2048)
   function getWorldById (id) {
     worldsQuery.query.params[0] = id
-    return worldsQuery.runSingle(false)
+    return worldsQuery.runSingle()
   }
   sock.getWorldById = getWorldById
-  sock.getAllFortunes = () => fortunesQuery.runSingle(false)
+  sock.getAllFortunes = () => fortunesQuery.runSingle()
   sock.getWorldsById = ids => worldsQuery.runBatch(ids)
   const worldCache = new SimpleCache(id => sock.getWorldById(id)).start()
   worldCache.getRandom = () => worldCache.get(getRandom())
@@ -84,7 +84,7 @@ async function setupConnection (sock) {
     if (!updateWorlds) {
       const update = generateBulkUpdate('world', 'randomnumber', 'id', count)
       const bulk = Object.assign(queries.update, update)
-      updateWorlds = sock.create(bulk)
+      updateWorlds = sock.compile(bulk)
       updates[count] = updateWorlds
       await updateWorlds
     }
@@ -97,7 +97,7 @@ async function setupConnection (sock) {
       updateWorlds.query.params[i++] = world.id
       updateWorlds.query.params[i++] = world.randomnumber
     }
-    return updateWorlds.runSingle(true)
+    return updateWorlds.runSingleCommit()
   }
   return sock
 }
@@ -132,7 +132,6 @@ module.exports = {
   getRandom,
   getCount,
   setup,
-  setupConnection,
   spray,
   sortByMessage,
   monitor

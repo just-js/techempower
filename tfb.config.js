@@ -1,10 +1,7 @@
-// postgres imports
 const postgres = require('@pg')
 
-const { BinaryInt, VarChar, fieldTypes } = postgres.constants
-const { INT4OID, VARCHAROID } = fieldTypes
+const { BinaryInt, VarChar } = postgres.constants
 
-// database connection details
 const db = {
   hostname: 'tfb-database',
   user: 'benchmarkdbuser',
@@ -15,7 +12,6 @@ const db = {
   poolSize: 1
 }
 
-// web server configuration
 const httpd = {
   address: '0.0.0.0',
   port: 8080,
@@ -33,11 +29,11 @@ const queries = {
     name: 'A'
   },
   worlds: {
-    name: 'B',
+    name: '',
     sql: 'select id, randomNumber from World where id = $1',
     fields: [
-      { format: BinaryInt, name: 'id', oid: INT4OID },
-      { format: BinaryInt, name: 'randomnumber', oid: INT4OID }
+      { format: BinaryInt, name: 'id' },
+      { format: BinaryInt, name: 'randomnumber' }
     ],
     params: 1,
     formats: [BinaryInt]
@@ -46,8 +42,8 @@ const queries = {
     name: 'C',
     sql: 'select * from Fortune',
     fields: [
-      { format: BinaryInt, name: 'id', oid: INT4OID },
-      { format: VarChar, name: 'message', oid: VARCHAROID, htmlEscape: true }
+      { format: BinaryInt, name: 'id' },
+      { format: VarChar, name: 'message', htmlEscape: true }
     ]
   }
 }
