@@ -1,8 +1,8 @@
-const postgres = require('../libs/pg/pg.js')
+const postgres = require('@pg')
 const config = require('tfb.config.js')
 
 const { connect } = postgres
-const { BinaryInt, VarChar } = postgres.constants
+const { BinaryInt } = postgres.constants
 const { runMicroTasks } = just.sys
 
 const getRandom = () => Math.ceil(Math.random() * 10000)

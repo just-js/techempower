@@ -1,4 +1,4 @@
-const postgres = require('../libs/pg/pg.js')
+const postgres = require('@pg')
 const config = require('tfb.config.js')
 const { stringify } = require('../examples/pgnative/util.js')
 
