@@ -112,27 +112,10 @@ async function setup (db) {
   return sock
 }
 
-/**
- * dump cpu and memory usage stats
- * @param {Object} db - database configuration
- */
-function monitor (threads) {
-  if (!threads) return
-  return just.setInterval(() => {
-    if (!just.env().MONITOR) return
-    const { user, system } = just.cpuUsage()
-    const { rss } = just.memoryUsage()
-    const totalMem = Math.floor(Number(rss) / (1024 * 1024))
-    const memPerThread = Math.floor((totalMem / threads.length) * 100) / 100
-    just.print(`threads ${threads.length} mem ${totalMem} MB / ${memPerThread} MB cpu (${user.toFixed(2)}/${system.toFixed(2)}) ${(user + system).toFixed(2)}`)
-  }, 1000)
-}
-
 module.exports = {
   getRandom,
   getCount,
   setup,
   spray,
-  sortByMessage,
-  monitor
+  sortByMessage
 }

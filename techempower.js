@@ -1,6 +1,5 @@
 const stringify = require('@stringify')
 const justify = require('@justify')
-const threadify = require('@threadify')
 const html = require('@html')
 const util = require('util.js')
 const config = require('tfb.config.js')
@@ -46,4 +45,13 @@ async function main () {
   server.listen(httpd.port, httpd.address)
 }
 
-util.monitor(threadify.spawn(main))
+if (just.args.length > 1) {
+  main().catch(err => just.error(err.stack))
+} else {
+  const process = require('process')
+  const { watch, launch } = process
+  const proc = parseInt(just.env().CPUS || just.sys.cpus, 10)
+  for (let i = 0; i < proc; i++) {
+    watch(launch(just.args[0], ['main'])).then(() => {})
+  }
+}
