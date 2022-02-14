@@ -1,22 +1,40 @@
-const postgres = require('@pg')
+const postgres = require('lib/pg/pg.js')
 
-const { BinaryInt, VarChar } = postgres.constants
+const { constants } = postgres
+const { BinaryInt, VarChar } = constants
 
 const db = {
   hostname: 'tfb-database',
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
   database: 'hello_world',
-  bufferSize: 64 * 1024,
-  noDelay: false,
-  poolSize: 1
+  version: constants.PG_VERSION
 }
 
-const httpd = {
-  address: '0.0.0.0',
-  port: 8080,
-  name: 'j',
-  stackTraces: false
+const fortunes = {
+  portal: '',
+  formats: [],
+  name: 'fortunes',
+  maxRows: 0,
+  params: [],
+  sql: 'select * from Fortune',
+  fields: [
+    { format: BinaryInt, name: 'id' },
+    { format: VarChar, name: 'message', htmlEscape: true }
+  ]
+}
+
+const worlds = {
+  portal: '',
+  formats: [BinaryInt],
+  name: 'worlds',
+  maxRows: 0,
+  params: [0],
+  sql: 'select id, randomNumber from World where id = $1',
+  fields: [
+    { format: BinaryInt, name: 'id' },
+    { format: BinaryInt, name: 'randomnumber' }
+  ]
 }
 
 const templates = {
@@ -24,31 +42,4 @@ const templates = {
   settings: { rawStrings: false, compile: true }
 }
 
-const queries = {
-  update: {
-    name: 'A'
-  },
-  worlds: {
-    name: '',
-    sql: 'select id, randomNumber from World where id = $1',
-    fields: [
-      { format: BinaryInt, name: 'id' },
-      { format: BinaryInt, name: 'randomnumber' }
-    ],
-    params: 1,
-    formats: [BinaryInt]
-  },
-  fortunes: {
-    name: 'C',
-    sql: 'select * from Fortune',
-    fields: [
-      { format: BinaryInt, name: 'id' },
-      { format: VarChar, name: 'message', htmlEscape: true }
-    ]
-  }
-}
-
-const maxRandom = 10000
-const maxQuery = 500
-
-module.exports = { db, httpd, maxRandom, maxQuery, templates, queries }
+module.exports = { db, fortunes, worlds, templates }

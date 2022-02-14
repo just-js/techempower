@@ -1,57 +1,72 @@
 const stringify = require('@stringify')
-const justify = require('@justify')
 const html = require('@html')
+const cache = require('@cache')
+const dns = require('@dns')
+const postgres = require('@pg')
+const http = require('@http')
+const socket = require('@socket')
+
 const util = require('util.js')
 const config = require('tfb.config.js')
 
+const { getIPAddress } = dns
+const { createSocket } = socket
+const { createServer, responses } = http
+const { SimpleCache } = cache
+const { sprayer, sortByMessage, spawn, getUpdateQuery } = util
+const { sjs, attr } = stringify
+const { db, fortunes, worlds, templates } = config
+
+const maxQuery = 500
+const maxRows = 10000
+const spray = sprayer(maxQuery)
+const message = 'Hello, World!'
+const json = { message }
+const extra = { id: 0, message: 'Additional fortune added at request time.' }
+const getRandom = () => Math.ceil(Math.random() * maxRows)
+const getCount = (qs = { q: 1 }) => (Math.min(parseInt((qs.q) || 1, 10), maxQuery) || 1)
+const sJSON = sjs({ message: attr('string') })
+const wJSON = sjs({ id: attr('number'), randomnumber: attr('number') })
+
 async function main () {
-  const { setup, sortByMessage, spray, getRandom, getCount } = util
-  const extra = { id: 0, message: 'Additional fortune added at request time.' }
-  const message = 'Hello, World!'
-  const json = { message }
-  const sJSON = stringify.sjs({ message: stringify.attr('string') })
-  const { db, templates, httpd } = config
+  const sock = createSocket()
+  const ip = await getIPAddress(db.hostname)
+  await sock.connect(ip, db.port || 5432)
+  const pg = await postgres.createSocket(sock, db)
+
+  sock.noDelay = false
+  pg.batchMode = true
+
+  const getWorldById = await pg.compile(worlds)
+  const getFortunes = await pg.compile(fortunes)
+  const worldCache = new SimpleCache(id => getWorldById(id))
   const template = html.load(templates.fortunes, templates.settings)
-  const {
-    getWorldsById, updateWorlds, getWorldById,
-    getAllFortunes, worldCache
-  } = await setup(db)
+  const getRandomWorld = () => getWorldById(getRandom())
+  const getRandomWorldCached = () => worldCache.get(getRandom())
 
-  const server = justify.createServer(httpd)
-  server.get('/plaintext', res => res.text(message))
-  server.get('/json', res => res.json(sJSON(json)))
-  server.get('/db', async res => {
-    res.json(JSON.stringify(await getWorldById(getRandom())))
-  })
-  server.get('/query', async (res, req) => {
-    const count = getCount(req.parseUrl(true).query)
-    const worlds = await getWorldsById(spray(count, getRandom))
-    res.json(JSON.stringify(worlds))
-  })
-  server.get('/update', async (res, req) => {
-    const count = getCount(req.parseUrl(true).query)
-    const worlds = await getWorldsById(spray(count, getRandom))
-    await updateWorlds(worlds, count)
-    res.json(JSON.stringify(worlds))
-  })
-  server.get('/fortunes', async res => {
-    res.html(template.call(sortByMessage([extra, ...await getAllFortunes()])))
-  })
-  server.get('/cached-world', async (res, req) => {
-    const count = getCount(req.parseUrl(true).query)
-    const worlds = await Promise.all(spray(count, worldCache.getRandom))
-    res.json(JSON.stringify(worlds))
-  })
-  server.listen(httpd.port, httpd.address)
+  const server = createServer()
+    .get('/plaintext', res => res.text(message))
+    .get('/json', res => res.utf8(sJSON(json), responses.json))
+    .get('/db', async res => res.utf8(wJSON(await getRandomWorld()), responses.json))
+    .get('/fortunes', async res => res.html(template.call(sortByMessage([extra, ...await getFortunes()]))))
+    .get('/cached-world', async (res, req) => res.json(await Promise.all(spray(getCount(req.query), getRandomWorldCached))))
+    .get('/query', async (res, req) => res.json(await Promise.all(spray(getCount(req.query), getRandomWorld))))
+    .get('/update', async (res, req) => {
+      const count = getCount(req.query)
+      const worlds = await Promise.all(spray(count, getRandomWorld))
+      const updateWorlds = await getUpdateQuery(count, pg)
+      await updateWorlds(...worlds.map(w => {
+        w.randomnumber = getRandom()
+        return [w.id, w.randomnumber]
+      }).flat())
+      res.json(worlds)
+    })
+    .listen('0.0.0.0', 8080)
+
+  just.setInterval(() => {
+    server.update()
+    worldCache.tick()
+  }, 1000)
 }
 
-if (just.args.length > 1) {
-  main().catch(err => just.error(err.stack))
-} else {
-  const process = require('process')
-  const { watch, launch } = process
-  const proc = parseInt(just.env().CPUS || just.sys.cpus, 10)
-  for (let i = 0; i < proc; i++) {
-    watch(launch(just.args[0], ['main'])).then(() => {})
-  }
-}
+spawn(main).catch(err => just.error(err.stack))
