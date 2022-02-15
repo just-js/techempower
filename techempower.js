@@ -35,7 +35,7 @@ async function main () {
   const pg = await postgres.createSocket(sock, db)
 
   sock.noDelay = false
-  pg.batchMode = true
+  pg.pipeline = true
 
   const getWorldById = await pg.compile(worlds)
   const getFortunes = await pg.compile(fortunes)
