@@ -26,6 +26,31 @@
         "display_name": "just-js",
         "notes": "",
         "versus": ""
+      },
+      "pipeline": {
+        "json_url": "/json",
+        "plaintext_url": "/plaintext",
+        "db_url": "/db",
+        "query_url": "/query?q=",
+        "cached_query_url": "/cached-world?q=",
+        "update_url": "/update?q=",
+        "network": "tfb",
+        "fortune_url": "/fortunes",
+        "port": 8080,
+        "approach": "Stripped",
+        "classification": "Platform",
+        "database": "Postgres",
+        "framework": "just",
+        "language": "JavaScript",
+        "flavor": "just",
+        "orm": "Raw",
+        "platform": "just-js",
+        "webserver": "None",
+        "os": "Linux",
+        "database_os": "Linux",
+        "display_name": "just-js-pipeline",
+        "notes": "",
+        "versus": "just-js"
       }
     }
   ]

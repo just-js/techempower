@@ -100,10 +100,40 @@ function getUpdateQuery (count, pg, formats = [BinaryInt]) {
   return promise
 }
 
+class Clock {
+  constructor () {
+    this.slots = new Map()
+  }
+
+  unset (callback, repeat = 1000) {
+    const current = this.slots.get(repeat)
+    if (!current) return
+    current.callbacks = current.callbacks.filter(cb => cb !== callback)
+    if (!current.callbacks.length) {
+      just.clearTimeout(current.timer)
+      this.slots.delete(repeat)
+    }
+  }
+
+  set (callback, repeat = 1000) {
+    let current = this.slots.get(repeat)
+    if (current) {
+      current.callbacks.push(callback)
+      return
+    }
+    current = {
+      callbacks: [callback],
+      timer: just.setInterval(() => current.callbacks.forEach(cb => cb()), repeat)
+    }
+    this.slots.set(repeat, current)
+  }
+}
+
 module.exports = {
   sprayer,
   spawn,
   sortByMessage,
   generateBulkUpdate,
-  getUpdateQuery
+  getUpdateQuery,
+  Clock
 }

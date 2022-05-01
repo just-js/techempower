@@ -15,7 +15,7 @@ RUN just build --clean --cleanall --static techempower.js
 
 FROM gcr.io/distroless/static:latest
 WORKDIR /app
-ENV PG_PIPELINE=0
+ENV PG_PIPELINE=1
 COPY --from=builder /app/techempower /app/techempower
 COPY fortunes.html /app/fortunes.html
 CMD ["./techempower"]

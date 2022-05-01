@@ -1,4 +1,4 @@
-const postgres = require('lib/pg/pg.js')
+const postgres = require('@pg')
 
 const { constants } = postgres
 const { BinaryInt, VarChar } = constants
@@ -8,7 +8,8 @@ const db = {
   user: 'benchmarkdbuser',
   pass: 'benchmarkdbpass',
   database: 'hello_world',
-  version: constants.PG_VERSION
+  version: constants.PG_VERSION,
+  port: 5432
 }
 
 const fortunes = {
@@ -42,4 +43,14 @@ const templates = {
   settings: { rawStrings: false, compile: true }
 }
 
-module.exports = { db, fortunes, worlds, templates }
+const maxQuery = 500
+const maxRows = 10000
+const message = 'Hello, World!'
+const json = { message }
+const extra = { id: 0, message: 'Additional fortune added at request time.' }
+
+module.exports = {
+  db, fortunes, worlds, templates,
+  maxQuery, maxRows, message, json,
+  extra 
+}
