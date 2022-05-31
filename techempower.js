@@ -37,7 +37,6 @@ async function main () {
   const pg = await postgres.createSocket(sock, db)
 
   sock.noDelay = false
-  pg.pipeline = (just.env().PIPELINE === '1')
 
   const getWorldById = await pg.compile(worlds)
   const getFortunes = await pg.compile(fortunes)
@@ -73,8 +72,10 @@ async function main () {
     })
     .listen('0.0.0.0', 8080)
 
-  clock.set(() => worldCache.tick())
-  clock.set(() => server.update())
+  clock.set(() => {
+    worldCache.tick()
+    server.update()
+  })
 }
 
 spawn(main).catch(err => just.error(err.stack))
