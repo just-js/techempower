@@ -95,9 +95,9 @@ function spawn (main) {
 
 const queryFnMap = new Map()
 
-const getUpdateQuery = (count, pg, formats = [BinaryInt]) => {
+const getUpdateQuery = async (count, pg, formats = [BinaryInt], ...queryArgs) => {
   !queryFnMap.get(count) && queryFnMap.set(count, pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, formats)));
-  return async (...args) => (await queryFnMap.get(count))(...args); 
+  return (await queryFnMap.get(count))(...queryArgs); 
 }
 
 class Clock {
