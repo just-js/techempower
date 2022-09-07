@@ -93,14 +93,11 @@ function spawn (main) {
   return Promise.all(processes.map(p => watch(p)))
 }
 
-const updates = new Map()
+const queryFnMap = new Map()
 
-function getUpdateQuery (count, pg, formats = [BinaryInt]) {
-  const query = updates.get(count)
-  if (query) return query
-  const promise = pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, formats))
-  updates.set(count, promise)
-  return promise
+const getUpdateQuery = (count, pg, formats = [BinaryInt]) => {
+  !queryFnMap.get(count) && queryFnMap.set(count, pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, formats)));
+  return async (...args) => (await queryFnMap.get(count))(...args); 
 }
 
 class Clock {
