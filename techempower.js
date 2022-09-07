@@ -55,14 +55,14 @@ async function main () {
       res.html(template.call(sortByMessage([extra, ...await getFortunes()])))
     })
     .get('/cached-world', async (res, req) => {
-      res.json(await Promise.all(spray(getCount(req.query), getCachedWorld)))
+      res.json(await spray(getCount(req.query), getCachedWorld))
     })
     .get('/query', async (res, req) => {
-      res.json(await Promise.all(spray(getCount(req.query), getRandomWorld)))
+      res.json(await spray(getCount(req.query), getRandomWorld))
     })
     .get('/update', async (res, req) => {
       const count = getCount(req.query)
-      const worlds = await Promise.all(spray(count, getRandomWorld))
+      const worlds = await spray(count, getRandomWorld)
       const updateWorlds = await getUpdateQuery(count, pg)
       await updateWorlds(...worlds.map(w => {
         w.randomnumber = getRandom()
