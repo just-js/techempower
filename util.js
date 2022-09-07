@@ -51,7 +51,7 @@ function generateBulkUpdate (table, field, id, updates = 5, formats = [BinaryInt
 function* sequenceGenerator(n,valueFn) {
   let currVal = 0;
   while(currVal < n) {
-    yield valueFn()
+    yield valueFn();
     currVal++;
   }  
 }
@@ -62,9 +62,8 @@ function* sequenceGenerator(n,valueFn) {
  * @param {string} n     - Size of the array to create
  * @param {string} field - The map function which will create each array value
  */
-const sprayer (max = 100) {
-  return (n, fn) => Array.from( sequenceGenerator(n % max, fn) );
-}
+const sprayer = (max = 100) =>
+ (n, fn) => Array.from( sequenceGenerator(n % max, fn) );
 
 function sortByMessage (arr) {
   const n = arr.length
