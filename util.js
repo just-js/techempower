@@ -48,10 +48,10 @@ function generateBulkUpdate (table, field, id, updates = 5, formats = [BinaryInt
 
 // Array.from( sequenceGenerator(500, getRandomWorld) )
 // [...sequenceGenerator(500, getRandomWorld)]
-function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
+async function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
   let currVal = 0;
   while(currVal < n) {
-    yield valueFn();
+    yield await valueFn();
     currVal++;
   }  
 }
@@ -60,9 +60,9 @@ function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valu
  * generate an array of N values resulting from fn()
  * also allow to set a queryLimit
  */
-const sprayer = (max = 100) =>
+const sprayer = async (max = 100) =>
  (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
-  Array.from( sequenceGenerator(n % max, fn) );
+  Array.from( await sequenceGenerator(n % max, fn) );
 
 function sortByMessage (arr) {
   const n = arr.length
