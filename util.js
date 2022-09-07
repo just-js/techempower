@@ -48,7 +48,7 @@ function generateBulkUpdate (table, field, id, updates = 5, formats = [BinaryInt
 
 // Array.from( sequenceGenerator(500, getRandomWorld) )
 // [...sequenceGenerator(500, getRandomWorld)]
-function* sequenceGenerator(n,valueFn) {
+function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
   let currVal = 0;
   while(currVal < n) {
     yield valueFn();
@@ -57,13 +57,12 @@ function* sequenceGenerator(n,valueFn) {
 }
 
 /**
- * Utility function to generate an array of N values populated with provided
- * map function. There seems to be no simpler/quicker way to do this in JS.
- * @param {string} n     - Size of the array to create
- * @param {string} field - The map function which will create each array value
+ * generate an array of N values resulting from fn()
+ * also allow to set a queryLimit
  */
 const sprayer = (max = 100) =>
- (n, fn) => Array.from( sequenceGenerator(n % max, fn) );
+ (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
+  Array.from( sequenceGenerator(n % max, fn) );
 
 function sortByMessage (arr) {
   const n = arr.length
