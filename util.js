@@ -95,8 +95,8 @@ function spawn (main) {
 
 const queryFnMap = new Map()
 
-const getUpdateQuery = async (count, pg, formats = [BinaryInt], ...queryArgs) => {
-  !queryFnMap.get(count) && queryFnMap.set(count, pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, formats)));
+const query = async (count, pg, ...queryArgs) => {
+  !queryFnMap.get(count) && queryFnMap.set(count, pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, pg.constants.BinaryInt)));
   return (await queryFnMap.get(count))(...queryArgs); 
 }
 
@@ -134,6 +134,6 @@ module.exports = {
   spawn,
   sortByMessage,
   generateBulkUpdate,
-  getUpdateQuery,
+  query,
   Clock
 }
