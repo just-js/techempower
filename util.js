@@ -48,10 +48,10 @@ function generateBulkUpdate (table, field, id, updates = 5, formats = [BinaryInt
 
 // Array.from( sequenceGenerator(500, getRandomWorld) )
 // [...sequenceGenerator(500, getRandomWorld)]
-async function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
+function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
   let currVal = 0;
   while(currVal < n) {
-    yield await valueFn();
+    yield valueFn();
     currVal++;
   }  
 }
@@ -62,7 +62,7 @@ async function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} *
  */
 const sprayer = (max = 100) =>
  async (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
-  Array.from( await sequenceGenerator(n % max, fn) );
+  await Promise.all(Array.from(sequenceGenerator(n % max, fn)));
 
 function sortByMessage (arr) {
   const n = arr.length
