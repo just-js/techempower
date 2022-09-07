@@ -60,8 +60,8 @@ async function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} *
  * generate an array of N values resulting from fn()
  * also allow to set a queryLimit
  */
-const sprayer = async (max = 100) =>
- (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
+const sprayer = (max = 100) =>
+ async (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
   Array.from( await sequenceGenerator(n % max, fn) );
 
 function sortByMessage (arr) {
