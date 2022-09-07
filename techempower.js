@@ -13,7 +13,7 @@ const { getIPAddress } = dns
 const { createSocket } = socket
 const { createServer, responses } = http
 const { SimpleCache } = cache
-const { sprayer, sortByMessage, spawn, getUpdateQuery, Clock } = util
+const { sprayer, sortByMessage, spawn, query, Clock } = util
 const { sjs, attr } = stringify
 const { 
   db, fortunes, worlds, templates,
@@ -63,11 +63,7 @@ async function main () {
     .get('/update', async (res, req) => {
       const count = getCount(req.query)
       const worlds = await spray(count, getRandomWorld)
-      const updateWorlds = await getUpdateQuery(count, pg)
-      await updateWorlds(...worlds.map(w => {
-        w.randomnumber = getRandom()
-        return [w.id, w.randomnumber]
-      }).flat())
+      await query(count, pg, ...worlds.map(w => [w.id, w.randomnumber = getRandom()]).flat() );
       res.json(worlds)
     })
     .listen('0.0.0.0', 8080)
