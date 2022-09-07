@@ -46,20 +46,23 @@ function generateBulkUpdate (table, field, id, updates = 5, formats = [BinaryInt
   }
 }
 
-/**
- * Utility function to generate an array of N values populated with provided
- * map function. There seems to be no simpler/quicker way to do this in JS.
- * @param {string} n     - Size of the array to create
- * @param {string} field - The map function which will create each array value
- */
-function sprayer (max = 100) {
-  const ar = [0]
-  for (let i = 0; i < max; i++) {
-    ar[i + 1] = (new Array(i + 1)).fill(1)
-  }
-  max += 1
-  return (n, fn) => ar[n % max].map(fn)
+// Array.from( sequenceGenerator(500, getRandomWorld) )
+// [...sequenceGenerator(500, getRandomWorld)]
+function* sequenceGenerator(/** @type {number} */ n, /** @type {()=><T>} */ valueFn) {
+  let currVal = 0;
+  while(currVal < n) {
+    yield valueFn();
+    currVal++;
+  }  
 }
+
+/**
+ * generate an array of N values resulting from fn()
+ * also allow to set a queryLimit
+ */
+const sprayer = (max = 100) =>
+ async (/** @type {number} */ n, /** @type {()=><T>} */ fn) => 
+  await Promise.all(Array.from(sequenceGenerator(n % max, fn)));
 
 function sortByMessage (arr) {
   const n = arr.length
@@ -90,14 +93,11 @@ function spawn (main) {
   return Promise.all(processes.map(p => watch(p)))
 }
 
-const updates = new Map()
+const queryFnMap = new Map()
 
-function getUpdateQuery (count, pg, formats = [BinaryInt]) {
-  const query = updates.get(count)
-  if (query) return query
-  const promise = pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, formats))
-  updates.set(count, promise)
-  return promise
+const query = async (count, pg, ...queryArgs) => {
+  !queryFnMap.get(count) && queryFnMap.set(count, pg.compile(generateBulkUpdate('world', 'randomnumber', 'id', count, pg.constants.BinaryInt)));
+  return (await queryFnMap.get(count))(...queryArgs); 
 }
 
 class Clock {
@@ -134,6 +134,6 @@ module.exports = {
   spawn,
   sortByMessage,
   generateBulkUpdate,
-  getUpdateQuery,
+  query,
   Clock
 }
